@@ -39,7 +39,8 @@ def apply_groove(
         slot = slots[slot_index]
 
         new_note = dict(note)
-        new_note["start_time"] = start + slot["timing_offset"] * timing_amount
+        # A note pulled earlier than the clip start would be rejected by Live.
+        new_note["start_time"] = max(0.0, start + slot["timing_offset"] * timing_amount)
         if "velocity" in note:
             scale = 1.0 + (slot["velocity_scale"] - 1.0) * velocity_amount
             scaled = note["velocity"] * scale

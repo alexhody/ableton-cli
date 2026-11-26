@@ -337,7 +337,14 @@ class LiveBackendTracksClipsMixin:
         return clip_obj
 
     def _require_session_audio_clip(self, track: int, clip: int, *, action: str) -> Any:
-        clip_obj = self._require_session_clip(track, clip, action=action)
+        return self._require_audio_clip(
+            self._require_session_clip(track, clip, action=action), action=action
+        )
+
+    @staticmethod
+    def _require_audio_clip(clip_obj: Any, *, action: str) -> Any:
+        # Live raises RuntimeError (not AttributeError) when an audio-only
+        # property such as gain or pitch_coarse is touched on a MIDI clip.
         if not bool(getattr(clip_obj, "is_audio_clip", False)):
             raise _invalid_argument(
                 message="clip must be an audio clip",
@@ -655,7 +662,7 @@ class LiveBackendTracksClipsMixin:
         }
 
     def clip_gain_set(self, track: int, clip: int, db: float) -> dict[str, Any]:
-        clip_obj = self._require_session_clip(track, clip, action="updating clip gain")
+        clip_obj = self._require_session_audio_clip(track, clip, action="updating clip gain")
         if not hasattr(clip_obj, "gain"):
             raise _not_supported_by_live_api(
                 message="Clip gain API is not available in Live API",
@@ -666,7 +673,9 @@ class LiveBackendTracksClipsMixin:
         return {"track": track, "clip": clip, "gain_db": float(db), "gain": float(clip_obj.gain)}
 
     def clip_transpose_set(self, track: int, clip: int, semitones: int) -> dict[str, Any]:
-        clip_obj = self._require_session_clip(track, clip, action="updating clip transpose")
+        clip_obj = self._require_session_audio_clip(
+            track, clip, action="updating clip transpose"
+        )
         self._set_required_clip_attr(clip_obj, "pitch_coarse", int(semitones), api_name="transpose")
         return {"track": track, "clip": clip, "pitch_coarse": int(clip_obj.pitch_coarse)}
 

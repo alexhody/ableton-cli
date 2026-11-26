@@ -104,3 +104,15 @@ def test_rejects_out_of_range_timing_amount() -> None:
 def test_rejects_out_of_range_velocity_amount() -> None:
     with pytest.raises(ValueError):
         apply_groove([_note(60, 0.0)], _swing_profile(), velocity_amount=-0.1)
+
+
+def test_negative_timing_offset_clamps_first_note_to_zero() -> None:
+    profile = {
+        "grid": "1/16",
+        "slots": [{"position": 0.0, "timing_offset": -0.02, "velocity_scale": 1.0}],
+    }
+    notes = [_note(60, 0.0), _note(62, 1.0)]
+
+    result = apply_groove(notes, profile, timing_amount=1.0)
+
+    assert [note["start_time"] for note in result] == pytest.approx([0.0, 0.98])

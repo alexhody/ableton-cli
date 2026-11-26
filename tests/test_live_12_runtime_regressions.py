@@ -261,3 +261,71 @@ def test_clip_warp_get_reports_sample_duration_in_seconds() -> None:
     backend = LiveBackend(surface)
 
     assert backend.clip_warp_get(1, 0)["sample_duration"] == pytest.approx(5.6865, abs=1e-4)
+
+
+class _StrictMidiClip(_Clip):
+    """A MIDI clip: Live raises RuntimeError for audio-only clip properties."""
+
+    @property
+    def gain(self) -> float:
+        raise RuntimeError("Only audio clips have a gain")
+
+    @gain.setter
+    def gain(self, _value: float) -> None:
+        raise RuntimeError("Only audio clips have a gain")
+
+    @property
+    def pitch_coarse(self) -> int:
+        raise RuntimeError("Only audio clips have a pitch_coarse")
+
+    @pitch_coarse.setter
+    def pitch_coarse(self, _value: int) -> None:
+        raise RuntimeError("Only audio clips have a pitch_coarse")
+
+
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        ("clip_gain_set", {"track": 1, "clip": 0, "db": -3.0}),
+        ("clip_transpose_set", {"track": 1, "clip": 0, "semitones": 2}),
+        ("arrangement_clip_gain_set", {"track": 1, "index": 0, "db": -3.0}),
+        ("arrangement_clip_transpose_set", {"track": 1, "index": 0, "semitones": 2}),
+    ],
+)
+def test_audio_only_clip_props_on_midi_clip_are_invalid_argument(
+    command: str, args: dict[str, Any]
+) -> None:
+    surface = _SurfaceStub()
+    track = surface.song().tracks[1]
+    track.clip_slots[0].clip = _StrictMidiClip(length=4.0)
+    track.arrangement_clips = [_StrictMidiClip(length=4.0)]
+    backend = LiveBackend(surface)
+
+    with pytest.raises(CommandError) as exc_info:
+        dispatch_command(backend, command, args)
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert "audio clip" in exc_info.value.message
+
+
+def test_audio_clip_gain_and_transpose_still_apply() -> None:
+    surface = _SurfaceStub()
+    track = surface.song().tracks[1]
+    session_clip = _Clip(length=4.0, is_audio_clip=True, is_midi_clip=False, file_path="/a.wav")
+    arrangement_clip = _Clip(length=4.0, is_audio_clip=True, is_midi_clip=False, file_path="/a.wav")
+    for clip in (session_clip, arrangement_clip):
+        clip.gain = 1.0
+        clip.pitch_coarse = 0
+    track.clip_slots[0].clip = session_clip
+    track.arrangement_clips = [arrangement_clip]
+    backend = LiveBackend(surface)
+
+    backend.clip_gain_set(1, 0, 0.0)
+    backend.clip_transpose_set(1, 0, 3)
+    backend.arrangement_clip_gain_set(1, 0, 0.0)
+    backend.arrangement_clip_transpose_set(1, 0, -5)
+
+    assert session_clip.gain == pytest.approx(1.0)
+    assert session_clip.pitch_coarse == 3
+    assert arrangement_clip.gain == pytest.approx(1.0)
+    assert arrangement_clip.pitch_coarse == -5
