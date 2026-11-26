@@ -377,6 +377,9 @@ def test_clip_groove_set_assigns_a_groove_pool_entry() -> None:
     assert result["groove_name"] == "Hip Hop Boom Bap 16ths 90 bpm"
     assert result["groove_path"] == HIP_HOP_GROOVE_PATH
     assert song.view.selected_track is previous_track
+    # Live may make a newly loaded groove the Set's default for new clips.
+    assert result["added_to_groove_pool"] is True
+    assert result["warnings"] == ["groove_may_be_default_for_new_clips"]
 
 
 def test_clip_groove_set_reuses_a_groove_already_in_the_pool() -> None:
@@ -384,8 +387,10 @@ def test_clip_groove_set_reuses_a_groove_already_in_the_pool() -> None:
     existing = _Groove("Hip Hop Boom Bap 16ths 90 bpm")
     surface.song().groove_pool.grooves.append(existing)
 
-    backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)
+    result = backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)
 
+    assert result["added_to_groove_pool"] is False
+    assert result["warnings"] == []
     assert surface.song().tracks[0].clip_slots[0].clip.groove is existing
     assert surface.song().groove_pool.grooves == [existing]
     assert surface.application().browser.loaded_items == []

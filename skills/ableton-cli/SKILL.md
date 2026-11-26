@@ -389,6 +389,11 @@ loads the `.agr` into the pool first. `clip groove get` reports only `groove_nam
 entry); the browser `groove_uri`/`groove_path` are returned by `set` only. Live has no per-clip
 groove amount and no way to remove a clip's groove, so `clip groove amount set` and
 `clip groove clear` on a clip that has a groove fail with `not_supported_by_live_api`.
+When the pool has no default groove, Live makes a newly loaded groove the Set's default, and
+every clip created or loaded afterwards gets it. The API can't read or change that default.
+`clip groove set` reports `added_to_groove_pool: true` and the warning
+`groove_may_be_default_for_new_clips` when it loads a groove. To stop new clips from getting
+the groove, untick its default in Live's Groove Pool, and don't save it into a template.
 
 ### Scenes
 

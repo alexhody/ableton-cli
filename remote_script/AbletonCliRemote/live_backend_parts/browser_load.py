@@ -89,19 +89,23 @@ class LiveBackendBrowserLoadMixin:
                 return groove
         return None
 
-    def _groove_for_browser_item(self, *, item: Any, track: int, clip: int) -> Any:
-        """Return the Groove Pool entry for a browser .agr item, loading it if needed.
+    def _groove_for_browser_item(self, *, item: Any, track: int, clip: int) -> tuple[Any, bool]:
+        """Return the Groove Pool entry for a browser .agr item, and whether it was loaded.
 
         A groove already in the pool is reused by name, so repeated assignments do
         not fill the pool with copies. Loading highlights the target clip slot
         first, so a load that Live applies to the highlighted clip lands on the
         clip being changed, and the previous selection is restored afterwards.
+
+        When the pool has no default groove, Live makes a newly loaded groove the
+        Set's default, which every new clip then gets. The Python API can neither
+        read nor change that default, so callers report the load instead.
         """
         item_name = str(getattr(item, "name", "")).strip()
         groove_name = item_name[: -len(_GROOVE_FILE_SUFFIX)]
         existing = self._pool_groove_named(groove_name)
         if existing is not None:
-            return existing
+            return existing, False
 
         song = self._ctx._song()
         target_track = self._ctx._track_at(track)
@@ -114,7 +118,7 @@ class LiveBackendBrowserLoadMixin:
         while True:
             loaded = self._pool_groove_named(groove_name)
             if loaded is not None:
-                return loaded
+                return loaded, True
             if monotonic() >= deadline:
                 raise CommandError(
                     code="INTERNAL_ERROR",
