@@ -216,7 +216,9 @@ class LiveBackendDeviceSharedMixin:
         del target_device
 
         target_parameter = self._ctx._parameter_at(track, device, parameter)
-        serialized_parameter = self._ctx._serialize_parameter(target_parameter, parameter)
+        serialized_parameter = self._ctx._serialize_parameter(
+            target_parameter, parameter, track_index=track, device_index=device
+        )
 
         if not serialized_parameter["is_enabled"]:
             raise _invalid_argument(

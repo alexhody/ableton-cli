@@ -599,7 +599,11 @@ class LiveBackendTransportMixerMixin:
 
     def master_devices_list(self) -> dict[str, Any]:
         target = self._ctx._song().master_track
-        return {"devices": self._ctx._serialize_devices(list(getattr(target, "devices", [])))}
+        return {
+            "devices": self._ctx._serialize_devices(
+                list(getattr(target, "devices", [])), main_track=True
+            )
+        }
 
     def mixer_crossfader_get(self) -> dict[str, Any]:
         mixer = self._ctx._song().master_track.mixer_device

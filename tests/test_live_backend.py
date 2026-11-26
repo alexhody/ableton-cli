@@ -4196,6 +4196,30 @@ def test_live_backend_master_commands() -> None:
     assert result["devices"][0]["parameters"][0]["stable_ref"].startswith("parameter:")
 
 
+def test_main_track_devices_and_parameter_sets_do_not_search_the_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Without a locator, every ref searched all tracks' parameters: in Live,
+    # `master devices list` took ~5 s with four devices on the main track.
+    surface = _SurfaceStub()
+    _set_track_device_to_effect(surface, track=0, device=0, effect_type="eq8")
+    backend = LiveBackend(surface)
+    context = backend.context
+
+    def _no_search(*_args: Any) -> None:
+        raise AssertionError("searched the whole Set for a locator")
+
+    monkeypatch.setattr(context, "_device_locator", _no_search)
+    monkeypatch.setattr(context, "_parameter_locator", _no_search)
+
+    device = backend.master_devices_list()["devices"][0]
+    entries = context._stable_ref_entries
+    assert entries[device["stable_ref"]]["locator"] == ("master", 0)
+    assert entries[device["parameters"][0]["stable_ref"]]["locator"] == ("master", 0, 0)
+
+    backend.set_effect_parameter_safe(track=0, device=0, parameter=0, value=0.7)
+
+
 def test_live_backend_mixer_and_track_routing_commands() -> None:
     backend = LiveBackend(_SurfaceStub())
 
