@@ -11,6 +11,7 @@ from ableton_cli.config import Settings
 from ableton_cli.errors import AppError
 from remote_script.AbletonCliRemote.events import EventBroker
 from remote_script.AbletonCliRemote.server import AbletonCommandServer
+from tests.remote_server_loop import serving
 
 
 class _StreamStub:
@@ -107,23 +108,20 @@ def test_parse_event_line_rejects_non_event_payloads() -> None:
         parse_event_line({"type": "event", "event": "tempo"})
 
 
-def _serve(broker: EventBroker) -> tuple[AbletonCommandServer, int]:
-    server = AbletonCommandServer(
+def _event_server(broker: EventBroker) -> AbletonCommandServer:
+    return AbletonCommandServer(
         host="127.0.0.1",
         port=0,
         command_executor=lambda name, args, meta: {},
         event_subscriber=lambda args, meta: broker.subscribe(args.get("events", [])),
         event_unsubscriber=broker.unsubscribe,
     )
-    server.start()
-    return server, server._server.server_address[1]  # noqa: SLF001
 
 
 def test_event_stream_round_trip_against_the_remote_server() -> None:
     broker = EventBroker(time_fn=lambda: 5.0)
-    server, port = _serve(broker)
-    settings = Settings(host="127.0.0.1", port=port, timeout_ms=5000)
-    try:
+    with serving(_event_server(broker)) as port:
+        settings = Settings(host="127.0.0.1", port=port, timeout_ms=5000)
         with EventStream(settings, events=["tempo"], idle_timeout_ms=5000) as stream:
             assert stream.subscribed == ["tempo"]
             broker.publish("tempo", {"tempo": 174.0})
@@ -131,19 +129,14 @@ def test_event_stream_round_trip_against_the_remote_server() -> None:
             assert received["event"] == "tempo"
             assert received["data"] == {"tempo": 174.0}
             assert received["dropped"] == 0
-    finally:
-        server.stop()
 
 
 def test_event_stream_surfaces_a_remote_subscription_error() -> None:
     broker = EventBroker()
-    server, port = _serve(broker)
-    settings = Settings(host="127.0.0.1", port=port, timeout_ms=5000)
-    try:
+    with serving(_event_server(broker)) as port:
+        settings = Settings(host="127.0.0.1", port=port, timeout_ms=5000)
         stream = EventStream(settings, events=["weather"])
         with pytest.raises(AppError) as exc_info:
             stream.open()
         assert exc_info.value.error_code
         stream.close()
-    finally:
-        server.stop()

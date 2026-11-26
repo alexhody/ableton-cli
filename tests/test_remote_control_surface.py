@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import threading
-import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -20,12 +20,16 @@ class _CommandServerStub:
         command_executor: Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]],
         event_subscriber: Callable[[dict[str, Any], dict[str, Any]], Any] | None = None,
         event_unsubscriber: Callable[[Any], None] | None = None,
+        *,
+        max_pending_requests: int,
     ) -> None:
         self.host = host
         self.port = port
         self.command_executor = command_executor
         self.event_subscriber = event_subscriber
         self.event_unsubscriber = event_unsubscriber
+        self.max_pending_requests = max_pending_requests
+        self.polls: list[float | None] = []
         self.started = False
         self.stopped = False
 
@@ -34,6 +38,9 @@ class _CommandServerStub:
 
     def stop(self) -> None:
         self.stopped = True
+
+    def poll(self, budget_s: float | None = None) -> None:
+        self.polls.append(budget_s)
 
 
 def _make_surface(
@@ -80,7 +87,7 @@ def test_surface_rejects_command_with_missing_or_wrong_auth_token(
 
     try:
         with pytest.raises(CommandExecutionError) as missing_token:
-            surface._execute_command_from_server_thread(
+            surface._execute_command(
                 "song_info",
                 {},
                 {"request_timeout_ms": 100},
@@ -88,7 +95,7 @@ def test_surface_rejects_command_with_missing_or_wrong_auth_token(
         assert missing_token.value.code == "UNAUTHORIZED"
 
         with pytest.raises(CommandExecutionError) as wrong_token:
-            surface._execute_command_from_server_thread(
+            surface._execute_command(
                 "song_info",
                 {},
                 {"request_timeout_ms": 100, "auth_token": "wrong-token"},
@@ -113,7 +120,7 @@ def test_surface_rejects_non_string_auth_token_without_raising_type_error(
 
     try:
         with pytest.raises(CommandExecutionError) as non_string_token:
-            surface._execute_command_from_server_thread(
+            surface._execute_command(
                 "song_info",
                 {},
                 {"request_timeout_ms": 100, "auth_token": 123},
@@ -137,7 +144,7 @@ def test_surface_allows_command_with_matching_auth_token(
     )
 
     try:
-        result = surface._execute_command_from_server_thread(
+        result = surface._execute_command(
             "song_info",
             {},
             {"request_timeout_ms": 100, "auth_token": "expected-token"},
@@ -148,275 +155,108 @@ def test_surface_allows_command_with_matching_auth_token(
     assert result == {"handled": "song_info", "args": {}}
 
 
-def test_surface_processes_commands_without_update_display(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        control_surface_module,
-        "dispatch_command",
-        lambda _backend, name, args: {"handled": name, "args": args},
-    )
+def test_surface_wires_its_executor_and_queue_bound_into_the_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     surface = _make_surface(monkeypatch)
 
     try:
-        result = surface._execute_command_from_server_thread(
-            "song_info",
-            {"include_devices": True},
-            {"request_timeout_ms": 100},
+        server = surface._command_server
+        assert server.started is True
+        assert server.command_executor == surface._execute_command
+        assert server.max_pending_requests == surface.MAX_PENDING_COMMANDS
+    finally:
+        surface.disconnect()
+
+    assert server.stopped is True
+
+
+def test_update_display_polls_the_server_inside_the_component_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = _make_surface(monkeypatch)
+    guard_depth: list[int] = []
+    depth = 0
+
+    @contextmanager
+    def _guard() -> Iterator[None]:
+        nonlocal depth
+        depth += 1
+        try:
+            yield
+        finally:
+            depth -= 1
+
+    surface.component_guard = _guard  # type: ignore[method-assign]
+    server = surface._command_server
+    original_poll = server.poll
+
+    def _poll(budget_s: float | None = None) -> None:
+        guard_depth.append(depth)
+        original_poll(budget_s)
+
+    server.poll = _poll
+
+    try:
+        surface.update_display()
+        surface.update_display()
+    finally:
+        surface.disconnect()
+
+    assert server.polls == [control_surface_module.DRAIN_BUDGET_S] * 2
+    assert guard_depth == [1, 1]
+
+
+def test_surface_dispatches_on_the_calling_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    threads: list[str] = []
+
+    def _dispatch(_backend: Any, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        threads.append(threading.current_thread().name)
+        return {"handled": name, "args": args}
+
+    monkeypatch.setattr(control_surface_module, "dispatch_command", _dispatch)
+    surface = _make_surface(monkeypatch)
+
+    try:
+        result = surface._execute_command(
+            "song_info", {"include_devices": True}, {"request_timeout_ms": 100}
         )
     finally:
         surface.disconnect()
 
     assert result == {"handled": "song_info", "args": {"include_devices": True}}
+    assert threads == [threading.current_thread().name]
 
 
-def test_surface_scheduled_drain_keeps_request_order(monkeypatch: pytest.MonkeyPatch) -> None:
-    executed: list[str] = []
-    monkeypatch.setattr(
-        control_surface_module,
-        "dispatch_command",
-        lambda _backend, name, _args: executed.append(name) or {"name": name},
-    )
-    surface = _make_surface(monkeypatch)
-    scheduled_callbacks: list[Callable[[], None]] = []
-
-    def _schedule_message(_delay: int, callback: Callable[[], None]) -> None:
-        scheduled_callbacks.append(callback)
-
-    surface.schedule_message = _schedule_message  # type: ignore[method-assign]
-
-    results: list[dict[str, Any]] = []
-    errors: list[Exception] = []
-
-    def _worker(name: str) -> None:
-        try:
-            results.append(
-                surface._execute_command_from_server_thread(
-                    name,
-                    {},
-                    {"request_timeout_ms": 300},
-                )
-            )
-        except Exception as exc:  # noqa: BLE001
-            errors.append(exc)
-
-    first = threading.Thread(target=_worker, args=("first",))
-    second = threading.Thread(target=_worker, args=("second",))
-    first.start()
-    second.start()
-
-    time.sleep(0.02)
-    assert len(scheduled_callbacks) == 1
-    scheduled_callbacks[0]()
-
-    first.join(timeout=1)
-    second.join(timeout=1)
-    surface.disconnect()
-
-    assert errors == []
-    assert executed == ["first", "second"]
-    assert sorted(entry["name"] for entry in results) == ["first", "second"]
-
-
-def test_surface_keeps_remote_busy_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        control_surface_module,
-        "dispatch_command",
-        lambda _backend, name, _args: {"name": name},
-    )
-    surface = _make_surface(monkeypatch)
-    surface.MAX_PENDING_COMMANDS = 0
-
-    try:
-        with pytest.raises(CommandExecutionError) as exc_info:
-            surface._execute_command_from_server_thread(
-                "song_info",
-                {},
-                {"request_timeout_ms": 100},
-            )
-    finally:
-        surface.disconnect()
-
-    assert exc_info.value.code == "REMOTE_BUSY"
-
-
-def test_surface_keeps_timeout_when_drain_is_not_scheduled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        control_surface_module,
-        "dispatch_command",
-        lambda _backend, name, _args: {"name": name},
-    )
-    surface = _make_surface(monkeypatch)
-    surface.schedule_message = lambda _delay, _callback: None  # type: ignore[method-assign]
-
-    try:
-        with pytest.raises(CommandExecutionError) as exc_info:
-            surface._execute_command_from_server_thread(
-                "song_info",
-                {},
-                {"request_timeout_ms": 25},
-            )
-    finally:
-        surface.disconnect()
-
-    assert exc_info.value.code == "TIMEOUT"
-
-
-class _FakeClock:
-    """Deterministic stand-in for the ``time`` module used by the drain loop."""
-
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def monotonic(self) -> float:
-        return self.now
-
-
-def _install_drain_harness(
+def test_a_failing_command_surfaces_as_an_execution_error(
     monkeypatch: pytest.MonkeyPatch,
-    surface: control_surface_module.AbletonCliRemoteSurface,
-    *,
-    seconds_per_command: float,
-) -> tuple[_FakeClock, list[str], list[Callable[[], None]]]:
-    clock = _FakeClock()
-    executed: list[str] = []
-
+) -> None:
     def _dispatch(_backend: Any, name: str, _args: dict[str, Any]) -> dict[str, Any]:
-        executed.append(name)
-        clock.now += seconds_per_command
-        return {"name": name}
+        raise ValueError("boom")
 
-    monkeypatch.setattr(control_surface_module, "time", clock)
     monkeypatch.setattr(control_surface_module, "dispatch_command", _dispatch)
-
-    scheduled: list[Callable[[], None]] = []
-    surface.schedule_message = lambda _delay, callback: scheduled.append(  # type: ignore[method-assign]
-        callback
-    )
-    return clock, executed, scheduled
-
-
-def _enqueue(
-    surface: control_surface_module.AbletonCliRemoteSurface, name: str
-) -> control_surface_module._CommandRequest:
-    request = control_surface_module._CommandRequest(
-        name=name,
-        args={},
-        timeout_ms=1000,
-        event=threading.Event(),
-    )
-    surface._queue.put(request)
-    return request
-
-
-def test_scheduled_drain_stops_at_the_main_thread_budget(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
     surface = _make_surface(monkeypatch)
-    monkeypatch.setattr(control_surface_module, "DRAIN_BUDGET_S", 0.005)
-    _clock, executed, scheduled = _install_drain_harness(
-        monkeypatch, surface, seconds_per_command=0.004
-    )
-    for index in range(5):
-        _enqueue(surface, f"command-{index}")
 
-    surface._scheduled_drain()
+    try:
+        with pytest.raises(CommandExecutionError) as exc_info:
+            surface._execute_command("song_info", {}, {})
+    finally:
+        surface.disconnect()
 
-    assert executed == ["command-0", "command-1"]
-    assert not surface._queue.empty()
+    assert exc_info.value.code == "INTERNAL_ERROR"
+    assert exc_info.value.message == "boom"
 
 
-def test_budget_overflow_is_rescheduled_until_every_request_completes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    surface = _make_surface(monkeypatch)
-    monkeypatch.setattr(control_surface_module, "DRAIN_BUDGET_S", 0.005)
-    clock, executed, scheduled = _install_drain_harness(
-        monkeypatch, surface, seconds_per_command=0.004
-    )
-    requests = [_enqueue(surface, f"command-{index}") for index in range(5)]
-
-    surface._scheduled_drain()
-    while scheduled:
-        callback = scheduled.pop(0)
-        clock.now = 0.0
-        callback()
-
-    assert executed == [f"command-{index}" for index in range(5)]
-    assert all(request.event.is_set() for request in requests)
-    assert surface._queue.empty()
-
-
-def test_budget_overflow_resets_the_drain_scheduled_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    surface = _make_surface(monkeypatch)
-    monkeypatch.setattr(control_surface_module, "DRAIN_BUDGET_S", 0.005)
-    clock, _executed, scheduled = _install_drain_harness(
-        monkeypatch, surface, seconds_per_command=0.004
-    )
-    for index in range(5):
-        _enqueue(surface, f"command-{index}")
-
-    surface._scheduled_drain()
-
-    # The flag was released and immediately re-taken by the pending reschedule.
-    assert len(scheduled) == 1
-    assert surface._drain_scheduled is True
-
-    while scheduled:
-        callback = scheduled.pop(0)
-        clock.now = 0.0
-        callback()
-
-    assert surface._drain_scheduled is False
-
-
-def test_exhausted_budget_still_dispatches_one_request(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    surface = _make_surface(monkeypatch)
-    monkeypatch.setattr(control_surface_module, "DRAIN_BUDGET_S", 0.0)
-    _clock, executed, _scheduled = _install_drain_harness(
-        monkeypatch, surface, seconds_per_command=0.004
-    )
-    for index in range(3):
-        _enqueue(surface, f"command-{index}")
-
-    surface._scheduled_drain()
-
-    assert executed == ["command-0"]
-
-
-def test_disconnect_drains_the_queue_regardless_of_budget(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    surface = _make_surface(monkeypatch)
-    monkeypatch.setattr(control_surface_module, "DRAIN_BUDGET_S", 0.0)
-    _clock, executed, _scheduled = _install_drain_harness(
-        monkeypatch, surface, seconds_per_command=0.004
-    )
-    for index in range(5):
-        _enqueue(surface, f"command-{index}")
-
-    surface.disconnect()
-
-    assert executed == [f"command-{index}" for index in range(5)]
-    assert surface._queue.empty()
-
-
-def _enqueue_keyed(
+def _run_keyed(
     surface: control_surface_module.AbletonCliRemoteSurface,
     name: str,
     key: str | None,
-) -> control_surface_module._CommandRequest:
-    request = control_surface_module._CommandRequest(
-        name=name,
-        args={},
-        timeout_ms=1000,
-        event=threading.Event(),
-        idempotency_key=key,
-    )
-    surface._queue.put(request)
-    return request
+) -> dict[str, Any] | CommandExecutionError:
+    meta = {} if key is None else {"idempotency_key": key}
+    try:
+        return surface._execute_command(name, {}, meta)
+    except CommandExecutionError as exc:
+        return exc
 
 
 def _count_dispatches(monkeypatch: pytest.MonkeyPatch, result: dict[str, Any]) -> list[str]:
@@ -436,14 +276,12 @@ def test_repeating_an_idempotency_key_replays_instead_of_dispatching(
     surface = _make_surface(monkeypatch)
     dispatched = _count_dispatches(monkeypatch, {"tempo": 120.0})
 
-    first = _enqueue_keyed(surface, "song_info", "key-1")
-    surface._drain_requests()
-    second = _enqueue_keyed(surface, "song_info", "key-1")
-    surface._drain_requests()
+    first = _run_keyed(surface, "song_info", "key-1")
+    second = _run_keyed(surface, "song_info", "key-1")
 
     assert dispatched == ["song_info"]
-    assert first.result == {"tempo": 120.0}
-    assert second.result == {"tempo": 120.0, "idempotent_replay": True}
+    assert first == {"tempo": 120.0}
+    assert second == {"tempo": 120.0, "idempotent_replay": True}
 
 
 def test_requests_without_a_key_are_always_dispatched(
@@ -452,9 +290,8 @@ def test_requests_without_a_key_are_always_dispatched(
     surface = _make_surface(monkeypatch)
     dispatched = _count_dispatches(monkeypatch, {"tempo": 120.0})
 
-    _enqueue_keyed(surface, "song_info", None)
-    _enqueue_keyed(surface, "song_info", None)
-    surface._drain_requests()
+    _run_keyed(surface, "song_info", None)
+    _run_keyed(surface, "song_info", None)
 
     assert dispatched == ["song_info", "song_info"]
 
@@ -473,32 +310,17 @@ def test_a_failed_command_is_replayed_as_the_same_failure(
 
     monkeypatch.setattr(control_surface_module, "dispatch_command", _dispatch)
 
-    _enqueue_keyed(surface, "track_volume_set", "key-1")
-    surface._drain_requests()
-    second = _enqueue_keyed(surface, "track_volume_set", "key-1")
-    surface._drain_requests()
+    first = _run_keyed(surface, "track_volume_set", "key-1")
+    second = _run_keyed(surface, "track_volume_set", "key-1")
 
     assert dispatched == ["track_volume_set"]
-    assert isinstance(second.error, CommandError)
-    assert second.error.code == "INVALID_ARGUMENT"
-    assert second.error.message == "bad track"
-    assert second.error.details == {"idempotent_replay": True}
-
-
-def test_cancelled_requests_leave_nothing_to_replay(monkeypatch: pytest.MonkeyPatch) -> None:
-    surface = _make_surface(monkeypatch)
-    dispatched = _count_dispatches(monkeypatch, {"tempo": 120.0})
-
-    cancelled = _enqueue_keyed(surface, "song_info", "key-1")
-    cancelled.cancelled = True
-    surface._drain_requests()
-    assert dispatched == []
-
-    retry = _enqueue_keyed(surface, "song_info", "key-1")
-    surface._drain_requests()
-
-    assert dispatched == ["song_info"]
-    assert retry.result == {"tempo": 120.0}
+    assert isinstance(first, CommandExecutionError)
+    assert first.details is None
+    assert isinstance(second, CommandExecutionError)
+    assert second.code == "INVALID_ARGUMENT"
+    assert second.message == "bad track"
+    assert second.hint == "fix it"
+    assert second.details == {"idempotent_replay": True}
 
 
 def test_response_cache_evicts_the_oldest_keys(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -507,17 +329,15 @@ def test_response_cache_evicts_the_oldest_keys(monkeypatch: pytest.MonkeyPatch) 
     dispatched = _count_dispatches(monkeypatch, {"tempo": 120.0})
 
     for index in range(4):
-        _enqueue_keyed(surface, "song_info", f"key-{index}")
-    surface._drain_requests()
+        _run_keyed(surface, "song_info", f"key-{index}")
     assert len(dispatched) == 4
     assert list(surface._response_cache) == ["key-1", "key-2", "key-3"]
 
     # key-0 fell out of the cache, so its retry has to run again.
-    evicted_retry = _enqueue_keyed(surface, "song_info", "key-0")
+    evicted_retry = _run_keyed(surface, "song_info", "key-0")
     # key-3 is still cached, so its retry is replayed.
-    cached_retry = _enqueue_keyed(surface, "song_info", "key-3")
-    surface._drain_requests()
+    cached_retry = _run_keyed(surface, "song_info", "key-3")
 
     assert len(dispatched) == 5
-    assert evicted_retry.result == {"tempo": 120.0}
-    assert cached_retry.result == {"tempo": 120.0, "idempotent_replay": True}
+    assert evicted_retry == {"tempo": 120.0}
+    assert cached_retry == {"tempo": 120.0, "idempotent_replay": True}

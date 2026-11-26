@@ -424,6 +424,12 @@ uv run ableton-cli install-remote-script --yes
 
 ## Low-latency operation
 
+The Remote Script serves requests on Live's main thread, from Live's display
+tick (about every 100 ms). A request waits at most one tick, so a single
+command answers in about 50 ms on average plus CLI startup. Requests sent one
+after another (including the steps of `batch run` and `batch stream`) run at
+about one per tick.
+
 For single commands, use existing subcommands as before.
 For repeated automation commands, prefer `batch stream` to keep one process alive and avoid process startup overhead.
 

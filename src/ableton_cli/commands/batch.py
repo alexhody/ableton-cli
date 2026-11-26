@@ -17,9 +17,9 @@ from ._validation import invalid_argument, require_non_empty_string
 batch_app = typer.Typer(help="Batch commands", no_args_is_help=True)
 _ASSERT_OPERATORS = frozenset({"eq", "ne", "gt", "gte", "lt", "lte"})
 #: REMOTE_BUSY is the only code safe to retry with no further machinery: the
-#: Remote Script raises it from `_execute_command_from_server_thread` on the
-#: queue-depth check, which runs *before* `self._queue.put()`, so the request
-#: provably never reached Live's main thread and had zero side effects.
+#: Remote Script's command server answers it from the queue-depth check, which
+#: runs *before* the request is queued, so the request provably never ran and
+#: had zero side effects.
 #: TIMEOUT stays out of the default so a step must opt in; opting in is safe
 #: because `_execute_step` carries one idempotency key across every attempt and
 #: the Remote Script replays the stored response rather than re-running.
@@ -488,9 +488,10 @@ def _run_preflight(
 def _annotate_step_timeout(exc: AppError, *, step_index: int, name: str) -> None:
     """Surface on a timed-out step whether Live may already have applied it.
 
-    The Remote Script reports ``may_have_executed`` once its main-thread wait
-    expires. ``None`` means no structured answer reached the client at all, so
-    the caller must assume the command might have landed.
+    The Remote Script reports ``may_have_executed`` when a command's deadline
+    expires, either while it waits for its turn or while it runs. ``None``
+    means no structured answer reached the client at all, so the caller must
+    assume the command might have landed.
     """
     if exc.error_code != ErrorCode.TIMEOUT:
         return

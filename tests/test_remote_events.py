@@ -15,6 +15,7 @@ from remote_script.AbletonCliRemote.events import (
 )
 from remote_script.AbletonCliRemote.live_events import LiveEventSource
 from remote_script.AbletonCliRemote.server import AbletonCommandServer
+from tests.remote_server_loop import serving
 
 
 def test_broker_delivers_only_subscribed_events() -> None:
@@ -172,17 +173,14 @@ def test_source_without_a_song_offers_no_events() -> None:
     assert source.attach() == ()
 
 
-def _start_server(broker: EventBroker) -> tuple[AbletonCommandServer, int]:
-    server = AbletonCommandServer(
+def _event_server(broker: EventBroker) -> AbletonCommandServer:
+    return AbletonCommandServer(
         host="127.0.0.1",
         port=0,
         command_executor=lambda name, args, meta: {"name": name},
         event_subscriber=lambda args, meta: broker.subscribe(args.get("events", [])),
         event_unsubscriber=broker.unsubscribe,
     )
-    server.start()
-    port = server._server.server_address[1]  # noqa: SLF001
-    return server, port
 
 
 def _subscribe_request(events: list[str]) -> bytes:
@@ -203,8 +201,7 @@ def _subscribe_request(events: list[str]) -> bytes:
 
 def test_server_streams_published_events_to_a_subscriber() -> None:
     broker = EventBroker(time_fn=lambda: 3.0)
-    server, port = _start_server(broker)
-    try:
+    with serving(_event_server(broker)) as port:
         with (
             socket.create_connection(("127.0.0.1", port), timeout=5) as sock,
             sock.makefile("rwb") as stream,
@@ -230,14 +227,11 @@ def test_server_streams_published_events_to_a_subscriber() -> None:
                 "data": {"tempo": 90.0},
                 "dropped": 0,
             }
-    finally:
-        server.stop()
 
 
 def test_server_rejects_an_unknown_event_name() -> None:
     broker = EventBroker()
-    server, port = _start_server(broker)
-    try:
+    with serving(_event_server(broker)) as port:
         with (
             socket.create_connection(("127.0.0.1", port), timeout=5) as sock,
             sock.makefile("rwb") as stream,
@@ -247,8 +241,24 @@ def test_server_rejects_an_unknown_event_name() -> None:
             response = json.loads(stream.readline().decode("utf-8"))
             assert response["ok"] is False
             assert response["error"]["code"] == "INTERNAL_ERROR"
-    finally:
-        server.stop()
+
+
+def test_closing_a_stream_connection_unsubscribes() -> None:
+    broker = EventBroker()
+    with serving(_event_server(broker)) as port:
+        with (
+            socket.create_connection(("127.0.0.1", port), timeout=5) as sock,
+            sock.makefile("rwb") as stream,
+        ):
+            stream.write(_subscribe_request(["tempo"]))
+            stream.flush()
+            assert json.loads(stream.readline())["ok"] is True
+            assert broker.subscription_count == 1
+
+        deadline = time.monotonic() + 5
+        while broker.subscription_count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert broker.subscription_count == 0
 
 
 def test_server_without_a_subscriber_refuses_subscriptions() -> None:
@@ -257,9 +267,7 @@ def test_server_without_a_subscriber_refuses_subscriptions() -> None:
         port=0,
         command_executor=lambda name, args, meta: {},
     )
-    server.start()
-    port = server._server.server_address[1]  # noqa: SLF001
-    try:
+    with serving(server) as port:
         with (
             socket.create_connection(("127.0.0.1", port), timeout=5) as sock,
             sock.makefile("rwb") as stream,
@@ -269,5 +277,3 @@ def test_server_without_a_subscriber_refuses_subscriptions() -> None:
             response = json.loads(stream.readline().decode("utf-8"))
             assert response["ok"] is False
             assert response["error"]["code"] == "INVALID_ARGUMENT"
-    finally:
-        server.stop()

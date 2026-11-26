@@ -3,8 +3,8 @@
 The command protocol is strictly request/response, so anything a user does
 in Live itself (moving the tempo, hitting play, selecting a track) could
 only be noticed by polling. Subscribers attach a bounded queue here; the
-control surface publishes onto it from Live's main thread and each
-connection thread drains its own queue.
+control surface publishes onto it from Live's main thread, and the command
+server moves each connection's queue onto its socket on the next display tick.
 
 Nothing in this module touches the Live API or a socket, so the fan-out,
 the bounds and the drop accounting are all testable on their own.
