@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from remote_script.AbletonCliRemote.command_backend import PROTOCOL_VERSION
+from remote_script.AbletonCliRemote.pending import PendingResult
 from remote_script.AbletonCliRemote.server import (
     AbletonCommandServer,
     CommandExecutionError,
@@ -427,3 +428,114 @@ def test_parse_command_request_rejects_an_invalid_idempotency_key(key: object) -
         _parse_command_request(_command_payload({"idempotency_key": key}))
 
     assert exc_info.value.code == "INVALID_ARGUMENT"
+
+
+class _Flag:
+    """Live state that a pending result waits for; flipped between polls like a tick."""
+
+    def __init__(self) -> None:
+        self.value = False
+
+
+def _pending_executor(flag: _Flag, calls: list[str], *, timeout_s: float = 1.0):  # noqa: ANN202
+    def _executor(name: str, args: dict[str, Any], meta: dict[str, Any]) -> Any:
+        calls.append(name)
+        if name != "transport_play":
+            return {"name": name}
+        return PendingResult(
+            ready=lambda: flag.value,
+            result=lambda: {"is_playing": flag.value},
+            timeout_s=timeout_s,
+        )
+
+    return _executor
+
+
+def test_pending_result_is_answered_on_the_poll_after_live_applies_it() -> None:
+    flag, calls = _Flag(), []
+    server = _server(_pending_executor(flag, calls))
+    server.start()
+    try:
+        sock = _connect_and_send(
+            server.server_address[1],
+            _request_line("play", "transport_play"),
+            _request_line("next", "song_info"),
+        )
+        _settle()
+
+        server.poll()
+        # Not answered while Live has not applied it, and the pipelined request waits.
+        readable, _, _ = select.select([sock], [], [], 0.1)
+        assert not readable
+        assert calls == ["transport_play"]
+
+        flag.value = True  # Live applies the change once the tick returns
+        server.poll()
+
+        assert _read_response(sock)["result"] == {"is_playing": True}
+        server.poll()
+        assert calls == ["transport_play", "song_info"]
+        sock.close()
+    finally:
+        server.stop()
+
+
+def test_pending_result_answers_with_the_current_state_when_its_wait_runs_out() -> None:
+    clock, flag, calls = _Clock(), _Flag(), []
+    server = _server(_pending_executor(flag, calls, timeout_s=1.0), clock=clock)
+    server.start()
+    try:
+        sock = _connect_and_send(server.server_address[1], _request_line("play", "transport_play"))
+        _settle()
+        server.poll()
+        clock.now += 1.5
+        server.poll()
+
+        response = _read_response(sock)
+        sock.close()
+    finally:
+        server.stop()
+
+    assert response["ok"] is True
+    assert response["result"] == {"is_playing": False}
+
+
+def test_pending_result_past_the_request_timeout_reports_may_have_executed() -> None:
+    clock, flag, calls = _Clock(), _Flag(), []
+    server = _server(_pending_executor(flag, calls, timeout_s=5.0), clock=clock)
+    server.start()
+    try:
+        sock = _connect_and_send(
+            server.server_address[1],
+            _request_line("play", "transport_play", {"request_timeout_ms": 100}),
+        )
+        _settle()
+        server.poll()
+        clock.now += 0.5
+        flag.value = True
+        server.poll()
+
+        error = _read_response(sock)["error"]
+        sock.close()
+    finally:
+        server.stop()
+
+    assert error["code"] == "TIMEOUT"
+    assert error["details"] == {"request_timeout_ms": 100, "may_have_executed": True}
+
+
+def test_pending_result_that_is_already_ready_is_answered_in_the_same_poll() -> None:
+    flag, calls = _Flag(), []
+    flag.value = True
+    server = _server(_pending_executor(flag, calls))
+    server.start()
+    try:
+        sock = _connect_and_send(server.server_address[1], _request_line("play", "transport_play"))
+        _settle()
+        server.poll()
+
+        assert _has_data(sock)
+        assert _read_response(sock)["result"] == {"is_playing": True}
+        sock.close()
+    finally:
+        server.stop()

@@ -11,6 +11,7 @@ from typing import Any
 
 from .command_backend import PROTOCOL_VERSION, RemoteErrorCode
 from .events import Subscription
+from .pending import PendingResult
 
 _REQUEST_KEYS = {"type", "name", "args", "meta", "request_id", "protocol_version"}
 _REQUEST_TYPES = ("command", "subscribe")
@@ -45,7 +46,7 @@ _SEND_BUFFER_BYTES = 4 * 1024 * 1024
 
 _RECV_CHUNK_BYTES = 64 * 1024
 
-CommandExecutor = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
+CommandExecutor = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any] | PendingResult]
 EventSubscriber = Callable[[dict[str, Any], dict[str, Any]], Subscription]
 
 
@@ -272,6 +273,20 @@ class _PendingLine:
     received_at: float
 
 
+@dataclass(slots=True)
+class _ParkedRequest:
+    """A command that ran but answers on a later tick (see :mod:`.pending`)."""
+
+    request_id: str
+    pending: PendingResult
+    #: Answer by then even when the result is not ready.
+    settle_deadline: float
+    #: The client's own deadline: answering later is a TIMEOUT.
+    request_deadline: float
+    timeout_ms: int
+    connection: _Connection | None = None
+
+
 class AbletonCommandServer:
     """JSONL command server driven entirely from Live's main thread.
 
@@ -309,6 +324,7 @@ class AbletonCommandServer:
         self._listener: socket.socket | None = None
         self._connections: dict[socket.socket, _Connection] = {}
         self._pending: deque[_PendingLine] = deque()
+        self._parked: list[_ParkedRequest] = []
 
     @property
     def server_address(self) -> tuple[str, int]:
@@ -328,6 +344,7 @@ class AbletonCommandServer:
         for connection in list(self._connections.values()):
             self._close(connection)
         self._pending.clear()
+        self._parked.clear()
         if self._listener is not None:
             self._listener.close()
             self._listener = None
@@ -345,6 +362,7 @@ class AbletonCommandServer:
             return
         deadline = None if budget_s is None else self._clock() + budget_s
         self._read_ready_sockets(listener)
+        self._answer_parked()
         self._run_pending(deadline)
         self._pump_events()
         self._flush_output()
@@ -506,6 +524,12 @@ class AbletonCommandServer:
                 continue
             handled += 1
             keep_open, response, subscription = self._handle_line(item.raw, item.received_at)
+            if isinstance(response, _ParkedRequest):
+                # Answered by _answer_parked; the connection keeps waiting until then.
+                connection.waiting = True
+                response.connection = connection
+                self._parked.append(response)
+                continue
             connection.outbuf += _encode_line(response)
             if subscription is not None:
                 self._start_stream(connection, subscription)
@@ -514,6 +538,39 @@ class AbletonCommandServer:
                 connection.inbuf.clear()
             else:
                 self._take_next_line(connection)
+
+    def _answer_parked(self) -> None:
+        """Answer each parked command whose result is ready or whose wait ran out."""
+        for parked in list(self._parked):
+            now = self._clock()
+            try:
+                if not parked.pending.ready() and now < parked.settle_deadline:
+                    continue
+                result = parked.pending.resolve()
+                response = _ok(request_id=parked.request_id, result=result)
+                if self._clock() >= parked.request_deadline:
+                    late = _timeout_error(parked.timeout_ms, may_have_executed=True)
+                    response = _error(
+                        request_id=parked.request_id,
+                        code=late.code,
+                        message=late.message,
+                        hint=late.hint,
+                        details=late.details,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                response = _error(
+                    request_id=parked.request_id,
+                    code=RemoteErrorCode.INTERNAL_ERROR.value,
+                    message=f"Remote internal error: {exc}",
+                    hint="Check Remote Script logs.",
+                )
+            self._parked.remove(parked)
+            connection = parked.connection
+            if connection is None or connection.closed:
+                continue
+            connection.waiting = False
+            connection.outbuf += _encode_line(response)
+            self._take_next_line(connection)
 
     def _start_stream(self, connection: _Connection, subscription: Subscription) -> None:
         """A subscribing connection becomes an event stream.
@@ -540,7 +597,7 @@ class AbletonCommandServer:
 
     def _handle_line(
         self, raw: bytes, received_at: float
-    ) -> tuple[bool, dict[str, Any], Subscription | None]:
+    ) -> tuple[bool, dict[str, Any] | _ParkedRequest, Subscription | None]:
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -568,6 +625,20 @@ class AbletonCommandServer:
             else:
                 timeout_ms = _parse_request_timeout_ms(meta)
                 result = self._run_command(name, args, meta, received_at, timeout_ms)
+                if isinstance(result, PendingResult):
+                    if not result.ready():
+                        return (
+                            True,
+                            _ParkedRequest(
+                                request_id=request_id,
+                                pending=result,
+                                settle_deadline=self._clock() + result.timeout_s,
+                                request_deadline=received_at + timeout_ms / 1000,
+                                timeout_ms=timeout_ms,
+                            ),
+                            None,
+                        )
+                    result = result.resolve()
                 response = _ok(request_id=request_id, result=result)
         except CommandExecutionError as exc:
             response = _error(
@@ -594,7 +665,7 @@ class AbletonCommandServer:
         meta: dict[str, Any],
         received_at: float,
         timeout_ms: int,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | PendingResult:
         """Run a command unless its deadline passed while it waited for its turn.
 
         A deadline that expires while the command runs cannot stop it, so the

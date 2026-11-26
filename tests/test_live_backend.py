@@ -14,9 +14,7 @@ from remote_script.AbletonCliRemote.live_backend import LiveBackend
 from remote_script.AbletonCliRemote.live_backend_parts import (
     clip_notes as clip_notes_module,
 )
-from remote_script.AbletonCliRemote.live_backend_parts import (
-    song_transport as song_transport_module,
-)
+from remote_script.AbletonCliRemote.pending import PendingResult
 
 
 @dataclass(slots=True)
@@ -1253,27 +1251,35 @@ def test_live_backend_ping_info_reports_api_support_true_when_available() -> Non
     }
 
 
+def _settled(pending: PendingResult, ticks: int = 100) -> dict[str, Any]:
+    """Resolve a pending result the way the server does: check once per tick, then read."""
+    for _ in range(ticks):
+        if pending.ready():
+            break
+    return pending.resolve()
+
+
 def test_live_backend_transport_and_tempo() -> None:
     backend = LiveBackend(_SurfaceStub())
 
-    assert backend.transport_play()["is_playing"] is True
+    assert _settled(backend.transport_play())["is_playing"] is True
     assert backend.transport_tempo_set(128.0)["tempo"] == 128.0
     assert backend.transport_tempo_get()["tempo"] == 128.0
-    assert backend.stop_playback()["is_playing"] is False
+    assert _settled(backend.stop_playback())["is_playing"] is False
 
 
 def test_live_backend_transport_waits_for_committed_state() -> None:
     backend = LiveBackend(_EventuallyConsistentSurfaceStub())
 
-    assert backend.transport_play()["is_playing"] is True
-    assert backend.transport_stop()["is_playing"] is False
+    assert _settled(backend.transport_play())["is_playing"] is True
+    assert _settled(backend.transport_stop())["is_playing"] is False
 
 
 def test_live_backend_transport_play_resumes_with_continue_playing() -> None:
     surface = _SurfaceStub()
     backend = LiveBackend(surface)
 
-    assert backend.transport_play()["is_playing"] is True
+    assert _settled(backend.transport_play())["is_playing"] is True
     assert surface._song_obj.playback_calls == ["continue_playing"]
 
 
@@ -1281,7 +1287,7 @@ def test_live_backend_transport_toggle_resumes_with_continue_playing() -> None:
     surface = _SurfaceStub()
     backend = LiveBackend(surface)
 
-    assert backend.transport_toggle()["is_playing"] is True
+    assert _settled(backend.transport_toggle())["is_playing"] is True
     assert surface._song_obj.playback_calls == ["continue_playing"]
 
 
@@ -2389,25 +2395,11 @@ def test_live_backend_load_existing_mode_rejects_invalid_clip_slot() -> None:
     assert exc_info.value.code == "INVALID_ARGUMENT"
 
 
-def test_live_backend_transport_stop_waits_for_longer_eventual_consistency(monkeypatch) -> None:
-    class _FakeClock:
-        def __init__(self) -> None:
-            self._now = 0.0
-
-        def monotonic(self) -> float:
-            return self._now
-
-        def sleep(self, seconds: float) -> None:
-            self._now += max(float(seconds), 0.0)
-
-    fake_clock = _FakeClock()
-    monkeypatch.setattr(song_transport_module.time, "monotonic", fake_clock.monotonic)
-    monkeypatch.setattr(song_transport_module.time, "sleep", fake_clock.sleep)
-
+def test_live_backend_transport_stop_is_ready_only_once_live_applies_it() -> None:
     class _LongEventuallyConsistentSong(_EventuallyConsistentSong):
         def stop_playing(self) -> None:
             self._actual_is_playing = False
-            # At 10ms poll intervals this requires ~0.6s of stale reads.
+            # Live reports the old state until it has applied the stop on a later tick.
             self._stale_reads_remaining = 60
 
     class _LongEventuallyConsistentSurfaceStub(_SurfaceStub):
@@ -2417,8 +2409,10 @@ def test_live_backend_transport_stop_waits_for_longer_eventual_consistency(monke
 
     backend = LiveBackend(_LongEventuallyConsistentSurfaceStub())
 
-    assert backend.transport_play()["is_playing"] is True
-    assert backend.transport_stop()["is_playing"] is False
+    assert _settled(backend.transport_play())["is_playing"] is True
+    stop = backend.transport_stop()
+    assert stop.ready() is False  # answered later, not by blocking Live in a loop
+    assert _settled(stop)["is_playing"] is False
 
 
 def test_live_backend_device_parameter_set() -> None:
@@ -4342,3 +4336,18 @@ def test_live_backend_track_routing_set_with_none_channel_keeps_live_default() -
     assert updated["current"]["type"] == "Resampling"
     assert updated["current"]["channel"] == ""
     assert updated["available"]["channels"] == [""]
+
+
+def test_execute_batch_reads_a_pending_transport_result_at_once() -> None:
+    from remote_script.AbletonCliRemote.command_backend import dispatch_command
+
+    backend = LiveBackend(_SurfaceStub())
+
+    result = dispatch_command(
+        backend,
+        "execute_batch",
+        {"steps": [{"name": "transport_play", "args": {}}, {"name": "song_info", "args": {}}]},
+    )
+
+    # A batch runs within one tick, so the step answers with a dict, not a PendingResult.
+    assert result["results"][0]["result"] == {"is_playing": True}

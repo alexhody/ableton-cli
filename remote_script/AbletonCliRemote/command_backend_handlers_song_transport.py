@@ -17,6 +17,7 @@ from .command_backend_validators import (
     _track_ref,
     _volume,
 )
+from .pending import PendingResult
 
 Handler = Callable[[CommandBackend, dict[str, Any]], dict[str, Any]]
 
@@ -80,23 +81,23 @@ def _handle_set_track_name(backend: CommandBackend, args: dict[str, Any]) -> dic
     return backend.set_track_name(track, name)
 
 
-def _handle_transport_play(backend: CommandBackend, _args: dict[str, Any]) -> dict[str, Any]:
+def _handle_transport_play(backend: CommandBackend, _args: dict[str, Any]) -> PendingResult:
     return backend.transport_play()
 
 
-def _handle_transport_stop(backend: CommandBackend, _args: dict[str, Any]) -> dict[str, Any]:
+def _handle_transport_stop(backend: CommandBackend, _args: dict[str, Any]) -> PendingResult:
     return backend.transport_stop()
 
 
-def _handle_transport_toggle(backend: CommandBackend, _args: dict[str, Any]) -> dict[str, Any]:
+def _handle_transport_toggle(backend: CommandBackend, _args: dict[str, Any]) -> PendingResult:
     return backend.transport_toggle()
 
 
-def _handle_start_playback(backend: CommandBackend, _args: dict[str, Any]) -> dict[str, Any]:
+def _handle_start_playback(backend: CommandBackend, _args: dict[str, Any]) -> PendingResult:
     return backend.start_playback()
 
 
-def _handle_stop_playback(backend: CommandBackend, _args: dict[str, Any]) -> dict[str, Any]:
+def _handle_stop_playback(backend: CommandBackend, _args: dict[str, Any]) -> PendingResult:
     return backend.stop_playback()
 
 

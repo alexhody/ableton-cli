@@ -5,6 +5,7 @@ from typing import Any
 
 from .command_backend_contract import CommandBackend, CommandError
 from .command_backend_validators import _invalid_argument, _non_empty_string
+from .pending import resolve_now
 
 Handler = Callable[[CommandBackend, dict[str, Any]], dict[str, Any]]
 DispatchCallable = Callable[[CommandBackend, str, dict[str, Any]], dict[str, Any]]
@@ -62,7 +63,9 @@ def make_execute_batch_handler(dispatch_command: DispatchCallable) -> Handler:
             step_name = str(step["name"])
             step_args = dict(step["args"])
             try:
-                step_result = dispatch_command(backend, step_name, step_args)
+                # A batch runs within one tick, so a pending result is read at once:
+                # Live applies a transport change only after the batch returns.
+                step_result = resolve_now(dispatch_command(backend, step_name, step_args))
                 results.append(
                     {
                         "index": index,
