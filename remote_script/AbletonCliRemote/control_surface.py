@@ -99,6 +99,9 @@ class AbletonCliRemoteSurface(_ControlSurface):
         # which serializes dispatch — so no lock is needed and no request can
         # observe another one mid-flight under the same key.
         self._response_cache: OrderedDict[str, _CachedResponse] = OrderedDict()
+        # Keyed commands that returned a PendingResult the server has not yet
+        # resolved. A retry of one waits for it rather than running again.
+        self._in_flight: dict[str, PendingResult] = {}
         remote_config = load_remote_config()
         self._auth_token = remote_config.auth_token
         self._event_broker = EventBroker()
@@ -173,6 +176,8 @@ class AbletonCliRemoteSurface(_ControlSurface):
         cached = self._replay_cached_response(key)
         if cached is not None:
             return cached
+        if key is not None and key in self._in_flight:
+            return self._follow_in_flight(key, self._in_flight[key])
         try:
             result = dispatch_command(self._backend, name, args)
         except Exception as exc:  # noqa: BLE001
@@ -183,13 +188,44 @@ class AbletonCliRemoteSurface(_ControlSurface):
             self._remember_response(key, _CachedResponse(error=error))
             raise _execution_error(error) from exc
         if isinstance(result, PendingResult):
-            # Cached once the server resolves it, a tick or more later.
-            result.add_done_callback(
-                lambda resolved: self._remember_response(key, _CachedResponse(result=resolved))
-            )
+            if key is not None:
+                # Cached once the server resolves it, a tick or more later.
+                self._in_flight[key] = result
+                result.add_done_callback(
+                    lambda resolved, error: self._settle_in_flight(key, resolved, error)
+                )
             return result
         self._remember_response(key, _CachedResponse(result=result))
         return result
+
+    def _settle_in_flight(
+        self, key: str, result: dict[str, Any] | None, error: Exception | None
+    ) -> None:
+        self._in_flight.pop(key, None)
+        if error is not None:
+            self._remember_response(key, _CachedResponse(error=_as_command_error(error)))
+        else:
+            self._remember_response(key, _CachedResponse(result=result))
+
+    def _follow_in_flight(self, key: str, original: PendingResult) -> PendingResult:
+        """A retry that arrives while its original still waits gets the original's outcome."""
+
+        def replay() -> dict[str, Any]:
+            try:
+                resolved = original.resolve()
+            except Exception as exc:  # noqa: BLE001
+                error = _as_command_error(exc)
+                raise CommandExecutionError(
+                    code=error.code,
+                    message=error.message,
+                    hint=error.hint,
+                    details={**(error.details or {}), IDEMPOTENT_REPLAY_FIELD: True},
+                ) from exc
+            return {**resolved, IDEMPOTENT_REPLAY_FIELD: True}
+
+        return PendingResult(
+            ready=lambda: original.done, result=replay, timeout_s=original.timeout_s
+        )
 
     def _remember_response(self, key: str | None, entry: _CachedResponse) -> None:
         if key is None:

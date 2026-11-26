@@ -13,9 +13,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+DoneCallback = Callable[[dict[str, Any] | None, Exception | None], None]
+
 
 class PendingResult:
-    __slots__ = ("_ready", "_result", "timeout_s", "_callbacks")
+    """A result read on a later tick. It resolves once; later reads repeat that outcome."""
+
+    __slots__ = ("_ready", "_result", "timeout_s", "_callbacks", "_outcome")
 
     def __init__(
         self,
@@ -27,21 +31,33 @@ class PendingResult:
         self._ready = ready
         self._result = result
         self.timeout_s = timeout_s
-        self._callbacks: list[Callable[[dict[str, Any]], None]] = []
+        self._callbacks: list[DoneCallback] = []
+        self._outcome: tuple[dict[str, Any] | None, Exception | None] | None = None
+
+    @property
+    def done(self) -> bool:
+        return self._outcome is not None
 
     def ready(self) -> bool:
-        return bool(self._ready())
+        return self.done or bool(self._ready())
 
-    def add_done_callback(self, callback: Callable[[dict[str, Any]], None]) -> None:
-        """Called with the result when the pending result resolves."""
+    def add_done_callback(self, callback: DoneCallback) -> None:
+        """Called once with ``(result, None)`` or ``(None, error)`` when this resolves."""
         self._callbacks.append(callback)
 
     def resolve(self) -> dict[str, Any]:
-        """Read the result now, whether or not it is ready."""
-        result = self._result()
-        for callback in self._callbacks:
-            callback(result)
-        return result
+        """Read the result now, whether or not it is ready, and keep that outcome."""
+        if self._outcome is None:
+            try:
+                self._outcome = (self._result(), None)
+            except Exception as exc:  # noqa: BLE001 - kept and re-raised below
+                self._outcome = (None, exc)
+            for callback in self._callbacks:
+                callback(*self._outcome)
+        result, error = self._outcome
+        if error is not None:
+            raise error
+        return result  # type: ignore[return-value]
 
 
 def resolve_now(value: Any) -> Any:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -364,3 +365,145 @@ def test_a_pending_result_is_cached_for_replay_once_it_resolves(
 
     replay = _run_keyed(surface, "transport_play", "key-1")
     assert replay == {"is_playing": True, "idempotent_replay": True}
+
+
+def _pending_dispatch(
+    monkeypatch: pytest.MonkeyPatch, playing: dict[str, Any], *, fail: bool = False
+) -> list[str]:
+    from remote_script.AbletonCliRemote.command_backend import CommandError
+    from remote_script.AbletonCliRemote.pending import PendingResult
+
+    dispatched: list[str] = []
+
+    def _result() -> dict[str, Any]:
+        if fail:
+            raise CommandError(code="INVALID_ARGUMENT", message="no transport", hint="fix it")
+        return {"is_playing": playing["value"]}
+
+    def _dispatch(_backend: Any, name: str, _args: dict[str, Any]) -> PendingResult:
+        dispatched.append(name)
+        return PendingResult(ready=lambda: playing["value"], result=_result, timeout_s=1.0)
+
+    monkeypatch.setattr(control_surface_module, "dispatch_command", _dispatch)
+    return dispatched
+
+
+def test_a_retry_while_the_original_is_pending_waits_for_it_instead_of_running_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = _make_surface(monkeypatch)
+    playing = {"value": False}
+    dispatched = _pending_dispatch(monkeypatch, playing)
+
+    original = _run_keyed(surface, "transport_play", "key-1")
+    retry = _run_keyed(surface, "transport_play", "key-1")
+
+    assert dispatched == ["transport_play"]
+    assert retry is not original
+    assert not retry.ready()
+
+    playing["value"] = True
+    assert not retry.ready()  # Live applied it, but the original has not answered yet
+    assert original.resolve() == {"is_playing": True}
+    assert retry.ready()
+    assert retry.resolve() == {"is_playing": True, "idempotent_replay": True}
+    assert surface._in_flight == {}
+    assert _run_keyed(surface, "transport_play", "key-1") == {
+        "is_playing": True,
+        "idempotent_replay": True,
+    }
+    assert dispatched == ["transport_play"]
+
+
+def test_a_retry_of_a_pending_command_that_fails_replays_the_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from remote_script.AbletonCliRemote.command_backend import CommandError
+
+    surface = _make_surface(monkeypatch)
+    dispatched = _pending_dispatch(monkeypatch, {"value": True}, fail=True)
+
+    original = _run_keyed(surface, "transport_play", "key-1")
+    retry = _run_keyed(surface, "transport_play", "key-1")
+    with pytest.raises(CommandError) as original_error:
+        original.resolve()
+    assert original_error.value.message == "no transport"
+    with pytest.raises(CommandExecutionError) as exc_info:
+        retry.resolve()
+    later = _run_keyed(surface, "transport_play", "key-1")
+
+    assert dispatched == ["transport_play"]
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert exc_info.value.details == {"idempotent_replay": True}
+    assert isinstance(later, CommandExecutionError)
+    assert later.code == "INVALID_ARGUMENT"
+    assert surface._in_flight == {}
+
+
+def test_a_pending_command_without_a_key_is_not_tracked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = _make_surface(monkeypatch)
+    dispatched = _pending_dispatch(monkeypatch, {"value": False})
+
+    _run_keyed(surface, "transport_play", None)
+    _run_keyed(surface, "transport_play", None)
+
+    assert dispatched == ["transport_play", "transport_play"]
+    assert surface._in_flight == {}
+
+
+def test_server_answers_a_retry_sent_while_its_original_is_parked_without_rerunning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    import socket
+
+    from remote_script.AbletonCliRemote.server import PROTOCOL_VERSION, AbletonCommandServer
+
+    surface = _make_surface(monkeypatch)
+    playing = {"value": False}
+    dispatched = _pending_dispatch(monkeypatch, playing)
+    server = AbletonCommandServer(
+        host="127.0.0.1", port=0, command_executor=surface._execute_command
+    )
+
+    def _send(request_id: str) -> socket.socket:
+        payload = {
+            "type": "command",
+            "name": "transport_play",
+            "args": {},
+            "meta": {"idempotency_key": "key-1"},
+            "request_id": request_id,
+            "protocol_version": PROTOCOL_VERSION,
+        }
+        sock = socket.create_connection(server.server_address, timeout=2.0)
+        sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+        return sock
+
+    def _read(sock: socket.socket) -> dict[str, Any]:
+        with sock.makefile("rb") as file_obj:
+            return json.loads(file_obj.readline())
+
+    server.start()
+    try:
+        first = _send("first")
+        time.sleep(0.05)
+        server.poll()
+        first.close()  # the client gave up waiting and retries
+        retry = _send("retry")
+        time.sleep(0.05)
+        server.poll()
+        assert dispatched == ["transport_play"]
+
+        playing["value"] = True
+        server.poll()
+        response = _read(retry)
+        retry.close()
+    finally:
+        server.stop()
+
+    assert response["ok"] is True
+    assert response["request_id"] == "retry"
+    assert response["result"] == {"is_playing": True, "idempotent_replay": True}
+    assert dispatched == ["transport_play"]
