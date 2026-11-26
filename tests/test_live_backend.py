@@ -1530,6 +1530,123 @@ def test_live_backend_load_existing_mode_targets_clip_slot_and_preserves_track_n
     assert target_track.clip_slots[1].has_clip is True
 
 
+def _force_alc_load_onto_new_track(surface: _SurfaceStub) -> None:
+    """Live 12 loads a .alc onto a brand new track and ignores the highlighted slot."""
+    browser = surface.application().browser
+    original_load_item = browser.load_item
+
+    def _load_item(item: _BrowserItem) -> None:
+        if str(getattr(item, "uri", "")) != "clip:bass-loop-alc":
+            original_load_item(item)
+            return
+        _append_imported_source_track(surface.song(), pitch=60)
+
+    browser.load_item = _load_item  # type: ignore[method-assign]
+
+
+def test_live_backend_load_auto_mode_rehomes_clip_into_requested_slot() -> None:
+    surface = _SurfaceStub()
+    _force_alc_load_onto_new_track(surface)
+    backend = LiveBackend(surface)
+
+    loaded = backend.load_instrument_or_effect(
+        0,
+        uri=None,
+        path="sounds/Bass Loop.alc",
+        target_track_mode="auto",
+        clip_slot=1,
+    )
+
+    assert loaded["track"] == 0
+    assert loaded["clip_slot"] == 1
+    assert loaded["notes_imported"] == 1
+    assert loaded["track_count_delta"] == 0
+    assert [track.name for track in surface.song().tracks] == ["Track 1", "Track 2"]
+    assert backend.get_clip_notes(0, 1, None, None, None)["note_count"] == 1
+
+
+def test_live_backend_load_auto_mode_without_clip_slot_reports_created_track() -> None:
+    surface = _SurfaceStub()
+    _force_alc_load_onto_new_track(surface)
+    backend = LiveBackend(surface)
+
+    loaded = backend.load_instrument_or_effect(
+        0,
+        uri=None,
+        path="sounds/Bass Loop.alc",
+        target_track_mode="auto",
+    )
+
+    assert loaded["track"] == 2
+    assert loaded["clip_slot"] == 0
+    assert loaded["track_name"] == "Imported Clip"
+    assert loaded["track_count_delta"] == 1
+    assert surface.song().tracks[2].clip_slots[0].has_clip is True
+
+
+def test_live_backend_load_midi_clip_into_audio_track_slot_is_rejected_before_loading() -> None:
+    surface = _SurfaceStub()
+    _force_alc_load_onto_new_track(surface)
+    backend = LiveBackend(surface)
+
+    with pytest.raises(CommandError) as exc_info:
+        backend.load_instrument_or_effect(
+            1,
+            uri=None,
+            path="sounds/Bass Loop.alc",
+            clip_slot=0,
+        )
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert "MIDI track" in exc_info.value.message
+    assert len(surface.song().tracks) == 2
+
+
+def test_live_backend_load_sample_into_audio_slot_fails_when_live_creates_no_clip() -> None:
+    surface = _SurfaceStub()
+    backend = LiveBackend(surface)
+
+    with pytest.raises(CommandError) as exc_info:
+        backend.load_instrument_or_effect(
+            1,
+            uri=None,
+            path="sounds/Bass Loop.wav",
+            clip_slot=1,
+        )
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert "did not create a clip" in exc_info.value.message
+    assert exc_info.value.details == {"track": 1, "clip_slot": 1, "item_name": "Bass Loop.wav"}
+
+
+def test_live_backend_load_sample_into_audio_slot_focuses_session_and_verifies_clip() -> None:
+    surface = _SurfaceStub()
+    song = surface.song()
+
+    def _load_sample_into_highlighted_slot(item: _BrowserItem) -> None:
+        # Live only drops a sample into the highlighted slot while Session view has focus.
+        if surface.application().view.focused_views[-1:] != ["Session"]:
+            return
+        slot = song.view.highlighted_clip_slot
+        assert slot is not None
+        slot.clip = _Clip(length=4.0, name="Bass Loop", is_audio_clip=True, is_midi_clip=False)
+
+    surface.application().browser.load_item = _load_sample_into_highlighted_slot  # type: ignore[method-assign]
+    backend = LiveBackend(surface)
+
+    loaded = backend.load_instrument_or_effect(
+        1,
+        uri=None,
+        path="sounds/Bass Loop.wav",
+        clip_slot=1,
+    )
+
+    assert loaded["track"] == 1
+    assert loaded["clip_slot"] == 1
+    assert song.tracks[1].clip_slots[1].has_clip is True
+    assert song.tracks[1].clip_slots[1].clip.is_audio_clip is True
+
+
 def test_live_backend_load_existing_mode_rehomes_clip_when_live_creates_new_track() -> None:
     surface = _SurfaceStub()
     browser = surface.application().browser

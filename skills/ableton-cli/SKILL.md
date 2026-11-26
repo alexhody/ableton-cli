@@ -410,6 +410,17 @@ For composition workflows, do not hard-code Drum Rack or kit targets. First run
 to select exact `uri` or `path` values from the active Live browser catalog before calling
 `browser load-drum-kit` or `browser load`.
 
+`browser load <track> <target> --clip-slot <n>` places clips:
+
+- A sample (`.wav`, `.aif`, ...) on an audio track becomes a clip in slot `n`. If Live
+  creates no clip there, the command fails with `INVALID_ARGUMENT` instead of reporting
+  `loaded: true`.
+- A MIDI clip (`.alc`) is copied into slot `n` of the target MIDI track, and the extra
+  track Live creates for it is deleted. Only the notes and clip name are copied, not the
+  `.alc` instrument. An audio target track is rejected before anything is loaded.
+- Without `--clip-slot`, Live puts a `.alc` on a new track. The result's `track`,
+  `clip_slot` and `track_name` then describe that new track.
+
 ### Batch
 
 ```bash

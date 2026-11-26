@@ -12,6 +12,7 @@ from .base import _invalid_argument, _not_supported_by_live_api
 _ALLOWED_TARGET_TRACK_MODES = frozenset({"auto", "existing", "new"})
 _BROWSER_IMPORT_SETTLE_TIMEOUT_SECONDS = 1.0
 _BROWSER_IMPORT_SETTLE_POLL_INTERVAL_SECONDS = 0.01
+_AUDIO_SAMPLE_EXTENSIONS = (".wav", ".aif", ".aiff", ".flac", ".mp3", ".ogg", ".m4a", ".caf")
 
 
 class LiveBackendBrowserLoadMixin:
@@ -110,6 +111,81 @@ class LiveBackendBrowserLoadMixin:
     def _is_midi_clip_browser_item(item: Any) -> bool:
         name = str(getattr(item, "name", "")).strip().lower()
         return bool(name.endswith(".alc"))
+
+    @staticmethod
+    def _is_audio_sample_browser_item(item: Any) -> bool:
+        if bool(getattr(item, "is_device", False)):
+            return False
+        name = str(getattr(item, "name", "")).strip().lower()
+        return name.endswith(_AUDIO_SAMPLE_EXTENSIONS)
+
+    def _require_midi_clip_destination(
+        self,
+        *,
+        item: Any,
+        target_track: Any,
+        target_track_mode: str,
+        clip_slot: int | None,
+    ) -> None:
+        if not self._is_midi_clip_browser_item(item):
+            return
+        if target_track_mode != "existing" and clip_slot is None:
+            return
+        if bool(getattr(target_track, "has_midi_input", False)):
+            return
+        raise _invalid_argument(
+            message="A MIDI clip (.alc) can only be placed into a clip slot of a MIDI track",
+            hint="Choose a MIDI track, or omit --clip-slot to let Live create a new track.",
+        )
+
+    def _require_loaded_audio_clip(
+        self,
+        *,
+        item: Any,
+        target_track: Any,
+        track: int,
+        clip_slot: int | None,
+    ) -> None:
+        if clip_slot is None or not self._is_audio_sample_browser_item(item):
+            return
+        if not bool(getattr(target_track, "has_audio_input", False)):
+            return
+        slot = list(getattr(target_track, "clip_slots", []))[clip_slot]
+        if bool(getattr(slot, "has_clip", False)):
+            return
+        raise CommandError(
+            code="INVALID_ARGUMENT",
+            message="Live loaded the sample but did not create a clip in the requested slot",
+            hint="Retry with an empty clip slot on an audio track while Live is open.",
+            details={
+                "track": track,
+                "clip_slot": clip_slot,
+                "item_name": str(getattr(item, "name", "")),
+            },
+        )
+
+    def _created_midi_clip_track(
+        self,
+        *,
+        song: Any,
+        item: Any,
+        target_track_mode: str,
+        clip_slot: int | None,
+        base_track_count: int,
+    ) -> dict[str, Any] | None:
+        """In auto mode without a slot, Live puts a .alc on a new track: report that track."""
+        if target_track_mode != "auto" or clip_slot is not None:
+            return None
+        if not self._is_midi_clip_browser_item(item):
+            return None
+        created_tracks = self._created_track_details(
+            after=list(getattr(song, "tracks", [])),
+            base_track_count=base_track_count,
+        )
+        clip_tracks = [track for track in created_tracks if bool(track["has_clip"])]
+        if len(clip_tracks) != 1:
+            return None
+        return clip_tracks[0]
 
     @staticmethod
     def _created_tracks_since(
@@ -732,7 +808,8 @@ class LiveBackendBrowserLoadMixin:
         clip_slot: int | None,
         base_track_count: int,
     ) -> tuple[int, int] | None:
-        if target_track_mode != "existing":
+        # existing mode always rehomes; auto mode rehomes when the caller named a slot.
+        if target_track_mode == "new" or (target_track_mode == "auto" and clip_slot is None):
             return None
         if not self._is_midi_clip_browser_item(item):
             return None
@@ -845,6 +922,12 @@ class LiveBackendBrowserLoadMixin:
             track=track,
             target_track_mode=target_track_mode,
         )
+        self._require_midi_clip_destination(
+            item=item,
+            target_track=target,
+            target_track_mode=target_track_mode,
+            clip_slot=clip_slot,
+        )
         track_name_before = str(getattr(target, "name", "")) if preserve_track_name else None
         self._select_track_for_load(song=song, target_track=target)
         resolved_clip_slot = self._select_clip_slot_for_load(
@@ -852,11 +935,21 @@ class LiveBackendBrowserLoadMixin:
             target_track=target,
             clip_slot=clip_slot,
         )
+        reported_track = target
         imported_note_count: int | None = None
         length_imported: bool | None = None
         groove_imported: bool | None = None
         if resolved_notes_mode is None:
+            if resolved_clip_slot is not None:
+                # Live drops a sample into the highlighted slot only while Session view is shown.
+                self._focus_session_view_for_load()
             self._browser().load_item(item)
+            self._require_loaded_audio_clip(
+                item=item,
+                target_track=target,
+                track=resolved_track,
+                clip_slot=resolved_clip_slot,
+            )
             rehomed = self._rehome_loaded_midi_clip_if_needed(
                 song=song,
                 item=item,
@@ -867,6 +960,17 @@ class LiveBackendBrowserLoadMixin:
             )
             if rehomed is not None:
                 imported_note_count, resolved_clip_slot = rehomed
+            created_clip_track = self._created_midi_clip_track(
+                song=song,
+                item=item,
+                target_track_mode=target_track_mode,
+                clip_slot=resolved_clip_slot,
+                base_track_count=base_track_count,
+            )
+            if created_clip_track is not None:
+                reported_track = created_clip_track["track"]
+                resolved_track = int(created_clip_track["index"])
+                resolved_clip_slot = created_clip_track["clip_slot"]
         else:
             if target_track_mode != "existing":
                 raise _invalid_argument(
@@ -932,7 +1036,7 @@ class LiveBackendBrowserLoadMixin:
             "notes_imported": imported_note_count,
             "length_imported": length_imported,
             "groove_imported": groove_imported,
-            "track_name": str(getattr(target, "name", "")),
+            "track_name": str(getattr(reported_track, "name", "")),
             "track_count": track_count_after,
             "track_count_delta": track_count_after - track_count_before,
         }
