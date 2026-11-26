@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
-import socketserver
-import threading
+import select
+import socket
+import time
+from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .command_backend import PROTOCOL_VERSION, RemoteErrorCode
@@ -18,10 +20,32 @@ _REQUEST_TYPES = ("command", "subscribe")
 #: pinned by a test.
 IDEMPOTENCY_KEY_MAX_LENGTH = 128
 
-#: How long a streaming connection waits for the next event before checking
-#: whether the server is shutting down.
-_EVENT_POLL_INTERVAL_S = 0.25
+#: Deadline used when a request carries no ``meta.request_timeout_ms``.
+DEFAULT_REQUEST_TIMEOUT_MS = 15000
 
+#: How many requests may wait for their turn at once. Each connection has at
+#: most one request waiting (the next line is read only after the previous one
+#: is answered), so this bounds concurrent connections with work in flight.
+DEFAULT_MAX_PENDING_REQUESTS = 512
+
+#: Unanswered input one connection may buffer before it is refused. Note
+#: payloads can be large, so the bound is generous; it only stops a client that
+#: never sends a newline from growing memory without limit.
+MAX_BUFFERED_INPUT_BYTES = 64 * 1024 * 1024
+
+#: Event lines are moved onto a connection's output only while less than this
+#: is still unsent, so a subscriber that stops reading loses events through its
+#: bounded Subscription queue instead of growing the output buffer.
+_EVENT_OUTPUT_HIGH_WATER_BYTES = 1024 * 1024
+
+#: Requested kernel send buffer per connection. A large one lets a big response
+#: (session snapshot, browser tree) leave in the tick that produced it instead
+#: of trickling out over later ticks. The kernel may grant less.
+_SEND_BUFFER_BYTES = 4 * 1024 * 1024
+
+_RECV_CHUNK_BYTES = 64 * 1024
+
+CommandExecutor = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
 EventSubscriber = Callable[[dict[str, Any], dict[str, Any]], Subscription]
 
 
@@ -179,85 +203,344 @@ def _validate_idempotency_key(meta: dict[str, Any]) -> None:
         )
 
 
-class _CommandTCPServer(socketserver.ThreadingTCPServer):
-    allow_reuse_address = True
+def _parse_request_timeout_ms(meta: dict[str, Any]) -> int:
+    raw_timeout = meta.get("request_timeout_ms", DEFAULT_REQUEST_TIMEOUT_MS)
+    try:
+        timeout_ms = int(raw_timeout)
+    except (TypeError, ValueError) as exc:
+        raise _invalid_request(
+            message=f"request_timeout_ms must be an integer, got {raw_timeout!r}",
+            hint="Provide a positive integer request_timeout_ms in request meta.",
+        ) from exc
+    if timeout_ms <= 0:
+        raise _invalid_request(
+            message=f"request_timeout_ms must be positive, got {timeout_ms}",
+            hint="Provide request_timeout_ms > 0 in request meta.",
+        )
+    return timeout_ms
+
+
+def _timeout_error(timeout_ms: int, *, may_have_executed: bool) -> CommandExecutionError:
+    return CommandExecutionError(
+        code=RemoteErrorCode.TIMEOUT.value,
+        message="Timed out waiting for Ableton main thread",
+        hint="Retry the command while Ableton Live is responsive.",
+        details={
+            "request_timeout_ms": timeout_ms,
+            "may_have_executed": may_have_executed,
+        },
+    )
+
+
+def _busy_response(raw: bytes, max_pending: int) -> dict[str, Any]:
+    try:
+        request_id = _request_id_from_payload(json.loads(raw.decode("utf-8")))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        request_id = "unknown"
+    return _error(
+        request_id=request_id,
+        code=RemoteErrorCode.REMOTE_BUSY.value,
+        message="Remote command queue is full",
+        hint="Reduce command throughput or retry after Live becomes responsive.",
+        details={"max_pending_commands": max_pending},
+    )
+
+
+def _encode_line(payload: dict[str, Any]) -> bytes:
+    return (json.dumps(payload) + "\n").encode("utf-8")
+
+
+@dataclass(eq=False, slots=True)
+class _Connection:
+    sock: socket.socket
+    inbuf: bytearray = field(default_factory=bytearray)
+    outbuf: bytearray = field(default_factory=bytearray)
+    #: A line from this connection is waiting in the server's pending queue.
+    waiting: bool = False
+    #: The peer sent EOF: answer what is buffered, then close.
+    read_closed: bool = False
+    #: Read nothing more; close once the output is written.
+    closing: bool = False
+    closed: bool = False
+    subscription: Subscription | None = None
+
+
+@dataclass(slots=True)
+class _PendingLine:
+    connection: _Connection
+    raw: bytes
+    received_at: float
+
+
+class AbletonCommandServer:
+    """JSONL command server driven entirely from Live's main thread.
+
+    Live's embedded Python holds the GIL outside its own callbacks, so a socket
+    thread only gets to run on Live's ~100 ms display tick, and every hand-off
+    between such a thread and the main thread waits for another tick. On Live
+    12.4 that made one command cost ~400 ms. This server owns no thread and
+    never blocks: the Control Surface calls :meth:`poll` from
+    ``update_display``, which accepts, reads, runs and answers in one tick.
+
+    Each connection is served one request at a time, in order: its next line is
+    taken only after the previous one has been answered, exactly as a blocking
+    ``readline`` loop would. Waiting requests from different connections run in
+    arrival order.
+    """
 
     def __init__(
         self,
-        server_address: tuple[str, int],
-        request_handler: type[socketserver.StreamRequestHandler],
-        command_executor: Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]],
+        host: str,
+        port: int,
+        command_executor: CommandExecutor,
         event_subscriber: EventSubscriber | None = None,
+        event_unsubscriber: Callable[[Subscription], None] | None = None,
+        *,
+        max_pending_requests: int = DEFAULT_MAX_PENDING_REQUESTS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.command_executor = command_executor
-        self.event_subscriber = event_subscriber
-        self.stopping = threading.Event()
-        super().__init__(server_address, request_handler)
+        self._host = host
+        self._port = port
+        self._command_executor = command_executor
+        self._event_subscriber = event_subscriber
+        self._event_unsubscriber = event_unsubscriber
+        self._max_pending = max_pending_requests
+        self._clock = clock
+        self._listener: socket.socket | None = None
+        self._connections: dict[socket.socket, _Connection] = {}
+        self._pending: deque[_PendingLine] = deque()
 
+    @property
+    def server_address(self) -> tuple[str, int]:
+        if self._listener is None:
+            raise RuntimeError("Server is not started")
+        host, port = self._listener.getsockname()[:2]
+        return host, port
 
-class _Handler(socketserver.StreamRequestHandler):
-    def handle(self) -> None:
-        while True:
-            raw = self.rfile.readline()
-            if not raw:
-                return
-
-            keep_open, response, subscription = self._handle_line(raw)
-            self._write_response(response)
-            if subscription is not None:
-                self._stream_events(subscription)
-                return
-            if not keep_open:
-                return
-
-    def _stream_events(self, subscription: Subscription) -> None:
-        """Serve events until the client goes away or the server stops.
-
-        A subscribing connection becomes an event stream: it stops reading
-        requests, so an interleaved command can never be silently ignored
-        while the socket is busy pushing.
-        """
-        server = self.server
-        stopping = getattr(server, "stopping", None)
-        try:
-            while stopping is None or not stopping.is_set():
-                received = subscription.get(timeout=_EVENT_POLL_INTERVAL_S)
-                if received is None:
-                    continue
-                event, dropped = received
-                self._write_response(
-                    event.to_line_payload(
-                        protocol_version=PROTOCOL_VERSION,
-                        dropped=dropped,
-                    )
-                )
-        except OSError:
+    def start(self) -> None:
+        if self._listener is not None:
             return
-        finally:
+        listener = socket.create_server((self._host, self._port))
+        listener.setblocking(False)
+        self._listener = listener
+
+    def stop(self) -> None:
+        for connection in list(self._connections.values()):
+            self._close(connection)
+        self._pending.clear()
+        if self._listener is not None:
+            self._listener.close()
+            self._listener = None
+
+    def poll(self, budget_s: float | None = None) -> None:
+        """Serve whatever is ready right now, without blocking.
+
+        ``budget_s`` bounds the time spent running requests; it is checked only
+        between requests, and at least one waiting request always runs, so a
+        tiny budget cannot starve the queue. Requests left over wait for the
+        next poll. ``None`` runs every waiting request.
+        """
+        listener = self._listener
+        if listener is None:
+            return
+        deadline = None if budget_s is None else self._clock() + budget_s
+        self._read_ready_sockets(listener)
+        self._run_pending(deadline)
+        self._pump_events()
+        self._flush_output()
+
+    # -- socket I/O -------------------------------------------------------
+
+    def _read_ready_sockets(self, listener: socket.socket) -> None:
+        readers = [listener]
+        readers.extend(c.sock for c in self._connections.values() if not c.closing)
+        readable, _, _ = select.select(readers, [], [], 0)
+        for sock in readable:
+            if sock is listener:
+                self._accept_all(listener)
+                continue
+            connection = self._connections.get(sock)
+            if connection is not None and not connection.closed:
+                self._read(connection)
+
+    def _accept_all(self, listener: socket.socket) -> None:
+        while True:
+            try:
+                sock, _address = listener.accept()
+            except (BlockingIOError, InterruptedError):
+                return
+            except OSError:
+                # e.g. ECONNABORTED: the peer gave up before we accepted.
+                return
+            sock.setblocking(False)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, _SEND_BUFFER_BYTES)
+            except OSError:
+                pass  # Optional tuning; the kernel default still works.
+            connection = _Connection(sock=sock)
+            self._connections[sock] = connection
+            # A single-shot client sends its request right after connecting;
+            # read it now rather than one tick later.
+            self._read(connection)
+
+    def _read(self, connection: _Connection) -> None:
+        while True:
+            try:
+                chunk = connection.sock.recv(_RECV_CHUNK_BYTES)
+            except (BlockingIOError, InterruptedError):
+                break
+            except OSError:
+                self._close(connection)
+                return
+            if not chunk:
+                if connection.subscription is not None:
+                    self._close(connection)
+                    return
+                connection.read_closed = True
+                break
+            if connection.subscription is not None:
+                # An event stream stops reading requests (see _start_stream).
+                continue
+            connection.inbuf += chunk
+            if len(connection.inbuf) > MAX_BUFFERED_INPUT_BYTES:
+                connection.inbuf.clear()
+                self._refuse(
+                    connection,
+                    _error(
+                        request_id="unknown",
+                        code=RemoteErrorCode.INVALID_ARGUMENT.value,
+                        message=(
+                            f"Request line exceeds {MAX_BUFFERED_INPUT_BYTES} bytes "
+                            "without a newline"
+                        ),
+                        hint="Send one JSON object per line.",
+                    ),
+                )
+                return
+        self._take_next_line(connection)
+
+    def _flush_output(self) -> None:
+        for connection in list(self._connections.values()):
+            while connection.outbuf:
+                try:
+                    sent = connection.sock.send(connection.outbuf)
+                except (BlockingIOError, InterruptedError):
+                    break
+                except OSError:
+                    self._close(connection)
+                    break
+                if sent <= 0:
+                    break
+                del connection.outbuf[:sent]
+            if connection.closed:
+                continue
+            if connection.closing and not connection.outbuf and not connection.waiting:
+                self._close(connection)
+
+    def _close(self, connection: _Connection) -> None:
+        if connection.closed:
+            return
+        connection.closed = True
+        self._connections.pop(connection.sock, None)
+        try:
+            connection.sock.close()
+        except OSError:
+            pass
+        subscription = connection.subscription
+        if subscription is not None:
             subscription.close()
-            unsubscribe = getattr(server, "event_unsubscriber", None)
-            if callable(unsubscribe):
-                unsubscribe(subscription)
+            if self._event_unsubscriber is not None:
+                self._event_unsubscriber(subscription)
 
-    def _subscribe(
-        self, request_id: str, args: dict[str, Any], meta: dict[str, Any]
-    ) -> tuple[dict[str, Any], Subscription]:
-        server = self.server
-        subscriber = getattr(server, "event_subscriber", None)
-        if not callable(subscriber):
-            raise CommandExecutionError(
-                code=RemoteErrorCode.INVALID_ARGUMENT.value,
-                message="This Remote Script does not serve event subscriptions",
-                hint="Reinstall the Remote Script with 'ableton-cli install-remote-script --yes'.",
+    def _refuse(self, connection: _Connection, response: dict[str, Any]) -> None:
+        """Answer once more, then close: the stream framing can no longer be trusted."""
+        connection.outbuf += _encode_line(response)
+        connection.closing = True
+        connection.inbuf.clear()
+
+    # -- request flow -----------------------------------------------------
+
+    def _take_next_line(self, connection: _Connection) -> None:
+        """Queue the connection's next complete line, if it has nothing waiting."""
+        while not (
+            connection.waiting
+            or connection.closing
+            or connection.closed
+            or connection.subscription is not None
+        ):
+            newline = connection.inbuf.find(b"\n")
+            if newline >= 0:
+                raw = bytes(connection.inbuf[: newline + 1])
+                del connection.inbuf[: newline + 1]
+            elif connection.read_closed and connection.inbuf:
+                # Like readline at EOF: an unterminated last line is still a line.
+                raw = bytes(connection.inbuf)
+                connection.inbuf.clear()
+            elif connection.read_closed:
+                connection.closing = True
+                return
+            else:
+                return
+
+            if len(self._pending) >= self._max_pending:
+                # Rejected before it is queued, so it provably never ran:
+                # batch retries rely on this to resend REMOTE_BUSY safely.
+                connection.outbuf += _encode_line(_busy_response(raw, self._max_pending))
+                continue
+
+            connection.waiting = True
+            self._pending.append(
+                _PendingLine(connection=connection, raw=raw, received_at=self._clock())
             )
-        subscription = subscriber(args, meta)
-        result = {
-            "subscribed": sorted(subscription.events),
-            "stream": True,
-        }
-        return _ok(request_id=request_id, result=result), subscription
 
-    def _handle_line(self, raw: bytes) -> tuple[bool, dict[str, Any], Subscription | None]:
+    def _run_pending(self, deadline: float | None) -> None:
+        handled = 0
+        while self._pending:
+            if deadline is not None and handled and self._clock() >= deadline:
+                return
+            item = self._pending.popleft()
+            connection = item.connection
+            connection.waiting = False
+            if connection.closed:
+                continue
+            handled += 1
+            keep_open, response, subscription = self._handle_line(item.raw, item.received_at)
+            connection.outbuf += _encode_line(response)
+            if subscription is not None:
+                self._start_stream(connection, subscription)
+            elif not keep_open:
+                connection.closing = True
+                connection.inbuf.clear()
+            else:
+                self._take_next_line(connection)
+
+    def _start_stream(self, connection: _Connection, subscription: Subscription) -> None:
+        """A subscribing connection becomes an event stream.
+
+        It stops reading requests, so an interleaved command can never be
+        silently ignored while the socket is busy pushing.
+        """
+        connection.subscription = subscription
+        connection.inbuf.clear()
+
+    def _pump_events(self) -> None:
+        for connection in list(self._connections.values()):
+            subscription = connection.subscription
+            if subscription is None or connection.closed:
+                continue
+            while len(connection.outbuf) < _EVENT_OUTPUT_HIGH_WATER_BYTES:
+                received = subscription.get(timeout=0)
+                if received is None:
+                    break
+                event, dropped = received
+                connection.outbuf += _encode_line(
+                    event.to_line_payload(protocol_version=PROTOCOL_VERSION, dropped=dropped)
+                )
+
+    def _handle_line(
+        self, raw: bytes, received_at: float
+    ) -> tuple[bool, dict[str, Any], Subscription | None]:
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -280,15 +563,11 @@ class _Handler(socketserver.StreamRequestHandler):
         subscription: Subscription | None = None
         try:
             request_id, request_type, name, args, meta = _parse_command_request(payload)
-
-            server = self.server
-            if not isinstance(server, _CommandTCPServer):
-                raise RuntimeError("Invalid server type")
-
             if request_type == "subscribe":
                 response, subscription = self._subscribe(request_id, args, meta)
             else:
-                result = server.command_executor(name, args, meta)
+                timeout_ms = _parse_request_timeout_ms(meta)
+                result = self._run_command(name, args, meta, received_at, timeout_ms)
                 response = _ok(request_id=request_id, result=result)
         except CommandExecutionError as exc:
             response = _error(
@@ -308,56 +587,45 @@ class _Handler(socketserver.StreamRequestHandler):
 
         return True, response, subscription
 
-    def _write_response(self, payload: dict[str, Any]) -> None:
-        self.wfile.write((json.dumps(payload) + "\n").encode("utf-8"))
-        self.wfile.flush()
-
-
-class AbletonCommandServer:
-    def __init__(
+    def _run_command(
         self,
-        host: str,
-        port: int,
-        command_executor: Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]],
-        event_subscriber: EventSubscriber | None = None,
-        event_unsubscriber: Callable[[Subscription], None] | None = None,
-    ) -> None:
-        self._host = host
-        self._port = port
-        self._command_executor = command_executor
-        self._event_subscriber = event_subscriber
-        self._event_unsubscriber = event_unsubscriber
-        self._server: _CommandTCPServer | None = None
-        self._thread: threading.Thread | None = None
+        name: str,
+        args: dict[str, Any],
+        meta: dict[str, Any],
+        received_at: float,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        """Run a command unless its deadline passed while it waited for its turn.
 
-    def start(self) -> None:
-        if self._thread is not None and self._thread.is_alive():
-            return
+        A deadline that expires while the command runs cannot stop it, so the
+        client is told TIMEOUT with ``may_have_executed: true``; the executor
+        has already recorded the outcome for an idempotent retry.
+        """
+        deadline = received_at + timeout_ms / 1000
+        if self._clock() >= deadline:
+            raise _timeout_error(timeout_ms, may_have_executed=False)
+        try:
+            result = self._command_executor(name, args, meta)
+        except Exception:
+            if self._clock() >= deadline:
+                raise _timeout_error(timeout_ms, may_have_executed=True) from None
+            raise
+        if self._clock() >= deadline:
+            raise _timeout_error(timeout_ms, may_have_executed=True)
+        return result
 
-        self._server = _CommandTCPServer(
-            (self._host, self._port),
-            _Handler,
-            command_executor=self._command_executor,
-            event_subscriber=self._event_subscriber,
-        )
-        self._server.event_unsubscriber = self._event_unsubscriber
-        self._thread = threading.Thread(
-            target=self._server.serve_forever,
-            name="ableton-cli-remote",
-            daemon=True,
-        )
-        self._thread.start()
-
-    def stop(self) -> None:
-        if self._server is None:
-            return
-
-        self._server.stopping.set()
-        self._server.shutdown()
-        self._server.server_close()
-
-        if self._thread is not None:
-            self._thread.join(timeout=1.0)
-
-        self._server = None
-        self._thread = None
+    def _subscribe(
+        self, request_id: str, args: dict[str, Any], meta: dict[str, Any]
+    ) -> tuple[dict[str, Any], Subscription]:
+        if self._event_subscriber is None:
+            raise CommandExecutionError(
+                code=RemoteErrorCode.INVALID_ARGUMENT.value,
+                message="This Remote Script does not serve event subscriptions",
+                hint="Reinstall the Remote Script with 'ableton-cli install-remote-script --yes'.",
+            )
+        subscription = self._event_subscriber(args, meta)
+        result = {
+            "subscribed": sorted(subscription.events),
+            "stream": True,
+        }
+        return _ok(request_id=request_id, result=result), subscription

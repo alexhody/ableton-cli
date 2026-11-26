@@ -6,6 +6,7 @@ import math
 import statistics
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -199,6 +200,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="CLI command prefix, e.g. '.venv/bin/ableton-cli' or 'uv run ableton-cli'.",
     )
     parser.add_argument(
+        "--tick-ms",
+        type=float,
+        default=100.0,
+        help="Simulated Live display tick that drives the Remote Script (Live uses ~100 ms).",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Print report as JSON only.",
@@ -218,17 +225,31 @@ def main() -> int:
         raise SystemExit("--iterations must be > 0")
     if args.warmup < 0:
         raise SystemExit("--warmup must be >= 0")
+    if args.tick_ms <= 0:
+        raise SystemExit("--tick-ms must be > 0")
 
     surface = AbletonCliRemoteSurface(None)
     c_instance = _CInstanceStub()
     surface.song = c_instance.song  # type: ignore[attr-defined]
     surface.application = c_instance.application  # type: ignore[attr-defined]
-    time.sleep(0.02)
+
+    # Live calls update_display on its main thread every ~100 ms; the Remote
+    # Script serves its sockets from there.
+    stop_ticking = threading.Event()
+
+    def _tick() -> None:
+        while not stop_ticking.wait(args.tick_ms / 1000.0):
+            surface.update_display()
+
+    ticker = threading.Thread(target=_tick, name="live-display-tick", daemon=True)
+    ticker.start()
 
     try:
         single_samples = _benchmark_single_shot(args.cli, args.iterations, args.warmup)
         stream_samples = _benchmark_stream(args.cli, args.iterations, args.warmup)
     finally:
+        stop_ticking.set()
+        ticker.join(timeout=2.0)
         surface.disconnect()
 
     single_summary = _summarize(single_samples)
@@ -239,6 +260,7 @@ def main() -> int:
     report = {
         "iterations": args.iterations,
         "warmup": args.warmup,
+        "tick_ms": args.tick_ms,
         "cli_prefix": args.cli,
         "single_shot": single_summary,
         "batch_stream": stream_summary,
