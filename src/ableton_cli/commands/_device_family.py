@@ -53,6 +53,10 @@ class DeviceFamily:
     def type_names(self) -> tuple[str, ...]:
         return tuple(device_type for device_type, _ in self.standard_types)
 
+    @property
+    def command_names(self) -> tuple[str, ...]:
+        return tuple(command_name for _, command_name in self.standard_types)
+
     def method(self, template: str) -> str:
         return template.format(family=self.name)
 
@@ -186,10 +190,11 @@ def _normalize_device_type(family: DeviceFamily, value: str) -> str:
     parsed = require_non_empty_string(
         family.type_arg, value, hint=f"Pass a non-empty {family.name} type."
     )
-    normalized = parsed.lower()
+    # Accept the CLI subcommand spelling (``auto-filter``) as well as the wire name.
+    normalized = parsed.lower().replace("-", "_")
     if normalized not in family.type_names:
         raise invalid_argument(
-            message=f"{family.type_arg} must be one of {', '.join(family.type_names)}",
+            message=f"{family.type_arg} must be one of {', '.join(family.command_names)}",
             hint=f"Use a supported {family.name} type.",
         )
     return normalized
@@ -219,7 +224,7 @@ def run_find(
 
 
 def type_filter_help(family: DeviceFamily) -> str:
-    return f"Optional {family.name} type filter: {'|'.join(family.type_names)}"
+    return f"Optional {family.name} type filter: {'|'.join(family.command_names)}"
 
 
 def _register_parameter_set(family: DeviceFamily, app: typer.Typer) -> None:

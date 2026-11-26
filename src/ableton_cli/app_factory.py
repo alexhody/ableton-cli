@@ -36,6 +36,7 @@ from .commands import (
     transport,
 )
 from .errors import AppError
+from .negative_numbers import accept_negative_number_arguments
 from .output import OutputMode, emit_human_error, emit_json, error_payload
 from .plugins.host import PluginSource, load_plugins
 from .plugins.model import PluginLoadReport
@@ -215,4 +216,5 @@ def create_app(
         reserved_names=command_roots(),
     )
     app.callback()(_with_plugin_report(report))
+    accept_negative_number_arguments(app)
     return app

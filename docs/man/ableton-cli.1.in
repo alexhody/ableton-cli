@@ -119,10 +119,10 @@ To confirm the latest script is active, run:
 
 and check `result.remote_script_version` plus `result.supported_commands`.
 
-When a positional numeric value starts with "-", insert `--` before the value:
+Negative positional numbers need no `--` separator:
 
-  ableton-cli track panning set 0 -- -0.25
-  ableton-cli effect parameter set 0 0 7 -- -2.0
+  ableton-cli track panning set -0.25 --track-index 0
+  ableton-cli effect parameter set -2.0 --track-index 0 --device-index 0 --parameter-index 7
 
 Standard wrapper commands (`synth <type> ...`, `effect <type> ...`) are strict. If
 you receive "Missing required standard ... keys", use generic indexed commands:

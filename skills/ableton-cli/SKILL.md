@@ -572,9 +572,9 @@ uv run ableton-cli plugins sync
   `--samples` times `--interval-ms` apart, and report `peak`/`mean` per channel. Meters read 0.0
   while stopped, so check `is_playing` in the result before treating a reading as silence.
 
-- For positional numeric arguments that begin with `-`, put all options first and insert `--` right before the value (options after `--` are read as positional arguments).
-  - Example: `uv run ableton-cli track panning set --track-index 0 -- -0.25`
-  - Example: `uv run ableton-cli effect parameter set --track-index 0 --device-index 0 --parameter-index 7 -- -2.0`
+- Negative positional numbers need no `--` separator; options may come before or after the value. An unknown option next to a negative number is still rejected with `No such option`.
+  - Example: `uv run ableton-cli track panning set -0.25 --track-index 0`
+  - Example: `uv run ableton-cli effect parameter set -2.0 --track-index 0 --device-index 0 --parameter-index 7`
 - For low-latency repeated automation operations, prefer `uv run ableton-cli batch stream`.
 - Capability and compatibility checks are explicit through `uv run ableton-cli ping` and `uv run ableton-cli doctor`.
 - Batch steps run once unless the step declares `retry`. `retry.on` defaults to `["REMOTE_BUSY"]`.
@@ -744,7 +744,7 @@ uv run ableton-cli --output json ping
 - `list_standard_synth_keys` -> `uv run ableton-cli --output json synth <wavetable|drift|meld> keys`
 - `set_standard_synth_parameter_safe` -> `uv run ableton-cli --output json synth <wavetable|drift|meld> set <value> --track-index <track> --device-index <device> --parameter-key <key>`
 - `observe_standard_synth_state` -> `uv run ableton-cli --output json synth <wavetable|drift|meld> observe --track-index <track> --device-index <device>`
-- `find_effect_devices` -> `uv run ableton-cli --output json effect find [--track <track>] [--type <eq8|limiter|compressor|auto_filter|reverb|utility>]`
+- `find_effect_devices` -> `uv run ableton-cli --output json effect find [--track <track>] [--type <eq8|limiter|compressor|auto-filter|reverb|utility>]`
 - `list_effect_parameters` -> `uv run ableton-cli --output json effect parameters list --track-index <track> --device-index <device>`
 - `set_effect_parameter_safe` -> `uv run ableton-cli --output json effect parameter set <value> --track-index <track> --device-index <device> --parameter-index <parameter>`
 - `observe_effect_parameters` -> `uv run ableton-cli --output json effect observe --track-index <track> --device-index <device>`

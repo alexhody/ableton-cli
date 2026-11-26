@@ -22132,7 +22132,7 @@
         "\u256d\u2500 Options \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
         "\u2502 --track        INTEGER  Optional track index filter (0-based)                                    \u2502",
         "\u2502 --type         TEXT     Optional effect type filter:                                             \u2502",
-        "\u2502                         eq8|limiter|compressor|auto_filter|reverb|utility                        \u2502",
+        "\u2502                         eq8|limiter|compressor|auto-filter|reverb|utility                        \u2502",
         "\u2502 --help                  Show this message and exit.                                              \u2502",
         "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
       ],
@@ -22172,7 +22172,7 @@
           "envvar": null,
           "expose_value": true,
           "flag_value": null,
-          "help": "Optional effect type filter: eq8|limiter|compressor|auto_filter|reverb|utility",
+          "help": "Optional effect type filter: eq8|limiter|compressor|auto-filter|reverb|utility",
           "hidden": false,
           "is_flag": false,
           "kind": "option",
