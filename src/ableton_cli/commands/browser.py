@@ -258,7 +258,13 @@ def browser_load(
     ] = "auto",
     clip_slot: Annotated[
         int | None,
-        typer.Option("--clip-slot", help="Clip slot (scene index, 0-based)"),
+        typer.Option(
+            "--clip-slot",
+            help=(
+                "Clip slot (scene index, 0-based). A sample on an audio track must land "
+                "in this slot; a .alc is placed in this slot of a MIDI track"
+            ),
+        ),
     ] = None,
     notes_mode: Annotated[
         str | None,
