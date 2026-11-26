@@ -149,7 +149,7 @@ Operational note: run `uv run ableton-cli doctor` to validate protocol/capabilit
 
 Operational note: ref-aware commands use selectors, not positional track/device/parameter indexes. Track selectors: `--track-index|--track-name|--selected-track|--track-query|--track-ref`. Device selectors: `--device-index|--device-name|--selected-device|--device-query|--device-ref`. Parameter selectors: `--parameter-index|--parameter-name|--parameter-query|--parameter-key|--parameter-ref`.
 
-Operational note: when passing a negative positional value, put every option first and `--` right before the value; options after `--` are read as positional arguments (for example, `track panning set --track-index 0 -- -0.25`, `effect parameter set --track-index 0 --device-index 0 --parameter-index 7 -- -2.0`).
+Operational note: negative positional values need no `--` separator, and options may come before or after the value (for example, `track panning set -0.25 --track-index 0`, `effect parameter set -2.0 --track-index 0 --device-index 0 --parameter-index 7`).
 
 Operational note: standard wrapper commands (`synth <type> ...`, `effect <type> ...`) intentionally fail if required parameter-name keys are missing. If you see `Missing required standard ... keys`, switch to generic indexed commands:
 - `uv run ableton-cli --output json effect parameters list --track-index <track> --device-index <device>`

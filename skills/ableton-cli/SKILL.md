@@ -252,7 +252,7 @@ uv run ableton-cli track solo set true --track-index 0
 uv run ableton-cli track arm get --track-index 0
 uv run ableton-cli track arm set false --track-index 0
 uv run ableton-cli track panning get --track-index 0
-uv run ableton-cli track panning set --track-index 0 -- -0.25
+uv run ableton-cli track panning set -0.25 --track-index 0
 uv run ableton-cli track meter get --track-index 0 --samples 20 --interval-ms 50
 uv run ableton-cli track send get 1 --track-index 0
 uv run ableton-cli track send set 1 0.6 --track-index 0
@@ -291,12 +291,12 @@ uv run ableton-cli master info
 uv run ableton-cli master volume get
 uv run ableton-cli master volume set 0.85
 uv run ableton-cli master panning get
-uv run ableton-cli master panning set -- 0.0
+uv run ableton-cli master panning set 0.0
 uv run ableton-cli master meter get --samples 20 --interval-ms 50
 uv run ableton-cli master devices list
 uv run ableton-cli device insert Limiter --main
 uv run ableton-cli device parameters list --main --device-name "Glue Compressor"
-uv run ableton-cli device parameter set-display --main --device-name "Glue Compressor" --parameter-name Threshold -- -10
+uv run ableton-cli device parameter set-display -10 --main --device-name "Glue Compressor" --parameter-name Threshold
 uv run ableton-cli device parameter select 4 --main --device-name "Glue Compressor" --parameter-name Ratio
 uv run ableton-cli device move --to-index 0 --main --device-index 2
 uv run ableton-cli device delete --main --device-index 3
@@ -313,7 +313,7 @@ uv run ableton-cli master effect utility keys
 uv run ableton-cli master effect utility set 0.5 --device-query "Utility" --parameter-key gain
 uv run ableton-cli master effect utility observe --device-query "Utility"
 uv run ableton-cli mixer crossfader get
-uv run ableton-cli mixer crossfader set -- -0.2
+uv run ableton-cli mixer crossfader set -0.2
 uv run ableton-cli mixer cue-volume get
 uv run ableton-cli mixer cue-volume set 0.75
 uv run ableton-cli mixer cue-routing get
@@ -382,6 +382,11 @@ uv run ableton-cli clip transpose set 0 0 --semitones 2
 uv run ableton-cli clip file replace 0 0 --audio-path /tmp/replacement.wav
 uv run ableton-cli clip file path get 0 0
 ```
+
+Audio-only clip commands: `clip gain set`, `clip transpose set`, `clip warp get|set`,
+`clip warp-marker ...`, `clip file path get`, and `arrangement clip gain set|transpose set`
+fail with `INVALID_ARGUMENT` ("clip must be an audio clip") on a MIDI clip. To transpose MIDI,
+use `clip notes transpose`.
 
 Grooves: Live 12 has no `grooves` browser root. `.agr` files sit under `user_library/Grooves/...`
 and `packs/Core Library/Grooves/...`, so find one with `browser search .agr --path <root>`.
@@ -467,7 +472,7 @@ uv run ableton-cli device macro list --track-index 0 --device-index 0
 uv run ableton-cli device macro set 0 64.0 --track-index 0 --device-index 0
 uv run ableton-cli device parameter set 0.5 --track-index 0 --device-ref device:12 --parameter-index 0
 uv run ableton-cli device parameters list --track-name Vox --device-name "Auto Shift"
-uv run ableton-cli device parameter set-display --track-name Bass --device-name Compressor --parameter-name Threshold -- -18
+uv run ableton-cli device parameter set-display -18 --track-name Bass --device-name Compressor --parameter-name Threshold
 uv run ableton-cli device parameter select RMS --track-name Bass --device-name Compressor --parameter-name Model
 uv run ableton-cli device parameter select 1/32 --track-name Drums --device-name "Beat Repeat" --parameter-name Grid
 uv run ableton-cli device active get --track-index 0 --device-index 1
@@ -536,7 +541,7 @@ uv run ableton-cli effect find
 uv run ableton-cli effect find --track 0 --type eq8
 uv run ableton-cli effect parameters list --track-index 0 --device-index 0
 uv run ableton-cli effect parameter set 0.5 --track-index 0 --device-index 0 --parameter-index 0
-uv run ableton-cli effect parameter set --track-index 0 --device-index 0 --parameter-index 7 -- -2.0
+uv run ableton-cli effect parameter set -2.0 --track-index 0 --device-index 0 --parameter-index 7
 uv run ableton-cli effect observe --track-index 0 --device-index 0
 uv run ableton-cli effect eq8 keys
 uv run ableton-cli effect eq8 set 0.6 --track-index 0 --device-index 0 --parameter-key band1_freq
@@ -545,17 +550,17 @@ uv run ableton-cli effect limiter keys
 uv run ableton-cli effect limiter set 0.4 --track-index 0 --device-index 0 --parameter-key ceiling
 uv run ableton-cli effect limiter observe --track-index 0 --device-index 0
 uv run ableton-cli effect compressor keys
-uv run ableton-cli effect compressor set 0 0 ratio 0.5
-uv run ableton-cli effect compressor observe 0 0
+uv run ableton-cli effect compressor set 0.5 --track-index 0 --device-index 0 --parameter-key ratio
+uv run ableton-cli effect compressor observe --track-index 0 --device-index 0
 uv run ableton-cli effect auto-filter keys
-uv run ableton-cli effect auto-filter set 0 0 lfo_rate 0.25
-uv run ableton-cli effect auto-filter observe 0 0
+uv run ableton-cli effect auto-filter set 0.25 --track-index 0 --device-index 0 --parameter-key lfo_rate
+uv run ableton-cli effect auto-filter observe --track-index 0 --device-index 0
 uv run ableton-cli effect reverb keys
-uv run ableton-cli effect reverb set 0 0 size 0.55
-uv run ableton-cli effect reverb observe 0 0
+uv run ableton-cli effect reverb set 0.55 --track-index 0 --device-index 0 --parameter-key size
+uv run ableton-cli effect reverb observe --track-index 0 --device-index 0
 uv run ableton-cli effect utility keys
-uv run ableton-cli effect utility set 0 0 width 0.75
-uv run ableton-cli effect utility observe 0 0
+uv run ableton-cli effect utility set 0.75 --track-index 0 --device-index 0 --parameter-key width
+uv run ableton-cli effect utility observe --track-index 0 --device-index 0
 ```
 
 ### Config / Completion
@@ -804,11 +809,11 @@ These commands exist in the surface but always fail with `error.code=NOT_IMPLEME
 commands that actually do the work.
 
 ```bash
-uv run ableton-cli remix setup-sound     # use: browser search + browser load / load-drum-kit
-uv run ableton-cli remix mix-macro       # use: create buses in Live, then track/return volume + send set
-uv run ableton-cli remix setup-mix       # same as mix-macro
-uv run ableton-cli remix setup-returns   # use: return-tracks create, then add effects in Live
-uv run ableton-cli remix setup-sidechain # use: device sidechain set on a Compressor
-uv run ableton-cli remix device-chain apply  # use: browser search + browser load + device parameter set
-uv run ableton-cli audio stems split     # use: an external separator, then audio asset add
+uv run ableton-cli remix setup-sound --project ./proj/remix_project.json  # use: browser search + browser load / load-drum-kit
+uv run ableton-cli remix mix-macro --project ./proj/remix_project.json  # use: create buses in Live, then track/return volume + send set
+uv run ableton-cli remix setup-mix --project ./proj/remix_project.json  # same as mix-macro
+uv run ableton-cli remix setup-returns --project ./proj/remix_project.json  # use: return-tracks create, then add effects in Live
+uv run ableton-cli remix setup-sidechain --project ./proj/remix_project.json  # use: device sidechain set on a Compressor
+uv run ableton-cli remix device-chain apply --project ./proj/remix_project.json --chain bass  # use: browser search + browser load + device parameter set
+uv run ableton-cli audio stems split --project ./proj/remix_project.json  # use: an external separator, then audio asset add
 ```
