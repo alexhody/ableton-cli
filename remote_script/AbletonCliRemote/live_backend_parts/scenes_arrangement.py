@@ -152,6 +152,23 @@ class LiveBackendScenesArrangementMixin:
         move_scene(from_index, to_index)
         return {"from": from_index, "to": to_index, "moved": True}
 
+    def scenes_delete(self, scene: int) -> dict[str, Any]:
+        self._ctx._scene_at(scene)
+        song = self._ctx._song()
+        if len(list(song.scenes)) <= 1:
+            raise _invalid_argument(
+                message="Cannot delete the only scene",
+                hint="Live keeps at least one scene; create another scene first.",
+            )
+        delete_scene = getattr(song, "delete_scene", None)
+        if not callable(delete_scene):
+            raise _not_supported_by_live_api(
+                message="Scene delete API is not available in Live API",
+                hint="Delete scenes manually in Ableton Live.",
+            )
+        delete_scene(scene)
+        return {"scene": scene, "deleted": True, "scene_count": len(list(song.scenes))}
+
     def stop_all_clips(self) -> dict[str, Any]:
         song = self._ctx._song()
         if not hasattr(song, "stop_all_clips"):

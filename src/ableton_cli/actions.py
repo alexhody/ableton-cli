@@ -370,7 +370,7 @@ STABLE_ACTION_MAPPINGS: tuple[StableActionMapping, ...] = (
     StableActionMapping(
         action="set_scene_name",
         command="uv run ableton-cli --output json scenes name set <scene> <name>",
-        capability="Rename a scene.",
+        capability="Rename a scene; an empty name clears it.",
     ),
     StableActionMapping(
         action="fire_scene",
@@ -378,9 +378,17 @@ STABLE_ACTION_MAPPINGS: tuple[StableActionMapping, ...] = (
         capability="Launch all clip slots on a scene row.",
     ),
     StableActionMapping(
+        action="scenes_delete",
+        command="uv run ableton-cli --output json scenes delete <scene>",
+        capability="Delete a scene by index; Live keeps at least one scene.",
+    ),
+    StableActionMapping(
         action="scenes_move",
         command="uv run ableton-cli --output json scenes move <from> <to>",
-        capability="Move a scene from one index to another when supported by Live API.",
+        capability=(
+            "Move a scene from one index to another when supported by Live API"
+            " (Live 12 has no scene move API, so this fails with not_supported_by_live_api)."
+        ),
     ),
     StableActionMapping(
         action="stop_all_clips",

@@ -67,9 +67,10 @@ Stable action names and CLI mappings for automation wrappers.
 | `stop_clip` | `uv run ableton-cli --output json clip stop <track> <clip>` | Stop a playing clip slot. |
 | `list_scenes` | `uv run ableton-cli --output json scenes list` | List scene indexes and names. |
 | `create_scene` | `uv run ableton-cli --output json scenes create [--index <index>]` | Create a scene at an index or append. |
-| `set_scene_name` | `uv run ableton-cli --output json scenes name set <scene> <name>` | Rename a scene. |
+| `set_scene_name` | `uv run ableton-cli --output json scenes name set <scene> <name>` | Rename a scene; an empty name clears it. |
 | `fire_scene` | `uv run ableton-cli --output json scenes fire <scene>` | Launch all clip slots on a scene row. |
-| `scenes_move` | `uv run ableton-cli --output json scenes move <from> <to>` | Move a scene from one index to another when supported by Live API. |
+| `scenes_delete` | `uv run ableton-cli --output json scenes delete <scene>` | Delete a scene by index; Live keeps at least one scene. |
+| `scenes_move` | `uv run ableton-cli --output json scenes move <from> <to>` | Move a scene from one index to another when supported by Live API (Live 12 has no scene move API, so this fails with not_supported_by_live_api). |
 | `stop_all_clips` | `uv run ableton-cli --output json session stop-all-clips` | Stop all currently playing clips in Session View. |
 | `get_browser_tree` | `uv run ableton-cli --output json browser tree [category_type]` | Read browser tree by category filter. |
 | `get_browser_items_at_path` | `uv run ableton-cli --output json browser items-at-path <path>` | List browser items at a specific path. |

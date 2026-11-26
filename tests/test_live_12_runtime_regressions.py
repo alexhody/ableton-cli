@@ -17,7 +17,15 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from test_live_backend import _Clip, _Device, _Parameter, _SurfaceStub, _Track
+from test_live_backend import (
+    HIP_HOP_GROOVE_PATH,
+    _Clip,
+    _Device,
+    _Groove,
+    _Parameter,
+    _SurfaceStub,
+    _Track,
+)
 
 from remote_script.AbletonCliRemote.command_backend import CommandError, dispatch_command
 from remote_script.AbletonCliRemote.live_backend import LiveBackend
@@ -329,3 +337,137 @@ def test_audio_clip_gain_and_transpose_still_apply() -> None:
     assert session_clip.pitch_coarse == 3
     assert arrangement_clip.gain == pytest.approx(1.0)
     assert arrangement_clip.pitch_coarse == -5
+
+
+class _StrictGrooveClip(_Clip):
+    """Live's Clip.groove setter takes only a Groove Pool entry: strings and None are rejected."""
+
+    @property
+    def groove(self) -> Any:
+        return self.__dict__.get("_groove")
+
+    @groove.setter
+    def groove(self, value: Any) -> None:
+        initializing = "_groove" not in self.__dict__  # _Clip.__init__ starts with None
+        if not isinstance(value, _Groove) and not (initializing and value is None):
+            raise TypeError(
+                "Python argument types in None.None(Clip, "
+                f"{type(value).__name__}) did not match C++ signature"
+            )
+        self.__dict__["_groove"] = value
+
+
+def _strict_groove_backend() -> tuple[LiveBackend, Any]:
+    surface = _SurfaceStub()
+    surface.song().tracks[0].clip_slots[0].clip = _StrictGrooveClip(length=4.0)
+    return LiveBackend(surface), surface
+
+
+def test_clip_groove_set_assigns_a_groove_pool_entry() -> None:
+    backend, surface = _strict_groove_backend()
+    song = surface.song()
+    previous_track = song.view.selected_track = song.tracks[1]
+
+    result = backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)
+
+    clip = song.tracks[0].clip_slots[0].clip
+    assert [groove.name for groove in song.groove_pool.grooves] == ["Hip Hop Boom Bap 16ths 90 bpm"]
+    assert clip.groove is song.groove_pool.grooves[0]
+    assert result["has_groove"] is True
+    assert result["groove_name"] == "Hip Hop Boom Bap 16ths 90 bpm"
+    assert result["groove_path"] == HIP_HOP_GROOVE_PATH
+    assert song.view.selected_track is previous_track
+
+
+def test_clip_groove_set_reuses_a_groove_already_in_the_pool() -> None:
+    backend, surface = _strict_groove_backend()
+    existing = _Groove("Hip Hop Boom Bap 16ths 90 bpm")
+    surface.song().groove_pool.grooves.append(existing)
+
+    backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)
+
+    assert surface.song().tracks[0].clip_slots[0].clip.groove is existing
+    assert surface.song().groove_pool.grooves == [existing]
+    assert surface.application().browser.loaded_items == []
+
+
+def test_clip_groove_get_reads_the_live_groove() -> None:
+    backend, _ = _strict_groove_backend()
+    backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)
+
+    current = backend.clip_groove_get(0, 0)
+
+    assert current["has_groove"] is True
+    assert current["groove_name"] == "Hip Hop Boom Bap 16ths 90 bpm"
+    assert current["groove_path"] is None
+
+
+def test_clip_groove_clear_is_not_supported_when_a_groove_is_assigned() -> None:
+    backend, surface = _strict_groove_backend()
+    backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)
+
+    with pytest.raises(CommandError) as exc_info:
+        backend.clip_groove_clear(0, 0)
+
+    assert exc_info.value.details == {"reason": "not_supported_by_live_api"}
+    assert surface.song().tracks[0].clip_slots[0].clip.groove is not None
+
+
+def test_clip_groove_clear_without_a_groove_is_a_no_op() -> None:
+    backend, _ = _strict_groove_backend()
+
+    cleared = backend.clip_groove_clear(0, 0)
+
+    assert cleared["has_groove"] is False
+
+
+def test_clip_groove_set_fails_when_live_does_not_add_the_groove(monkeypatch) -> None:
+    from remote_script.AbletonCliRemote.live_backend_parts import browser_load
+
+    monkeypatch.setattr(browser_load, "_BROWSER_IMPORT_SETTLE_TIMEOUT_SECONDS", 0.0)
+    backend, surface = _strict_groove_backend()
+    surface.application().browser.load_item = lambda item: None  # type: ignore[method-assign]
+
+    with pytest.raises(CommandError) as exc_info:
+        backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)
+
+    assert exc_info.value.code == "INTERNAL_ERROR"
+    assert surface.song().tracks[0].clip_slots[0].clip.groove is None
+
+
+def test_live_12_browser_has_no_grooves_root() -> None:
+    backend, _ = _strict_groove_backend()
+
+    with pytest.raises(CommandError) as exc_info:
+        backend.clip_groove_set(0, 0, "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr")
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert "Unknown or unavailable category: grooves" in exc_info.value.message
+
+
+def test_scenes_delete_uses_song_delete_scene() -> None:
+    backend = LiveBackend(_SurfaceStub())
+
+    result = dispatch_command(backend, "scenes_delete", {"scene": 0})
+
+    assert result == {"scene": 0, "deleted": True, "scene_count": 1}
+    assert [scene["name"] for scene in backend.scenes_list()["scenes"]] == ["Scene 2"]
+
+
+def test_scenes_delete_refuses_the_only_scene() -> None:
+    backend = LiveBackend(_SurfaceStub())
+    dispatch_command(backend, "scenes_delete", {"scene": 1})
+
+    with pytest.raises(CommandError) as exc_info:
+        dispatch_command(backend, "scenes_delete", {"scene": 0})
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert len(backend.scenes_list()["scenes"]) == 1
+
+
+def test_scene_name_can_be_cleared() -> None:
+    backend = LiveBackend(_SurfaceStub())
+
+    result = dispatch_command(backend, "set_scene_name", {"scene": 0, "name": ""})
+
+    assert result == {"scene": 0, "name": ""}

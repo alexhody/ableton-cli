@@ -370,7 +370,7 @@ class _BackendStub:
             "clip": clip,
             "has_groove": True,
             "groove_uri": "groove:hip-hop-boom-bap-16ths-90",
-            "groove_path": "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
+            "groove_path": "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
             "groove_name": "Hip Hop Boom Bap 16ths 90 bpm.agr",
             "amount": 0.5,
         }
@@ -382,7 +382,7 @@ class _BackendStub:
             "has_groove": True,
             "target": target,
             "groove_uri": "groove:hip-hop-boom-bap-16ths-90",
-            "groove_path": "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
+            "groove_path": "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
             "groove_name": "Hip Hop Boom Bap 16ths 90 bpm.agr",
             "amount": 0.5,
         }
@@ -393,7 +393,7 @@ class _BackendStub:
             "clip": clip,
             "has_groove": True,
             "groove_uri": "groove:hip-hop-boom-bap-16ths-90",
-            "groove_path": "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
+            "groove_path": "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
             "groove_name": "Hip Hop Boom Bap 16ths 90 bpm.agr",
             "amount": value,
         }
@@ -1966,7 +1966,7 @@ def test_dispatch_calls_backend_for_clip_groove_commands() -> None:
     set_result = dispatch_command(
         backend,
         "clip_groove_set",
-        {"track": 0, "clip": 1, "target": "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"},
+        {"track": 0, "clip": 1, "target": "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"},
     )
     amount_result = dispatch_command(
         backend,
@@ -1977,7 +1977,7 @@ def test_dispatch_calls_backend_for_clip_groove_commands() -> None:
 
     assert gotten["has_groove"] is True
     assert set_result["has_groove"] is True
-    assert set_result["target"] == "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"
+    assert set_result["target"] == "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"
     assert amount_result["amount"] == 0.7
     assert cleared["has_groove"] is False
 

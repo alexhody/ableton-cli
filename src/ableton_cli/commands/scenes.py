@@ -202,6 +202,11 @@ SCENE_FIRE_SPEC = SceneCommandSpec(
     client_method="fire_scene",
 )
 
+SCENE_DELETE_SPEC = SceneCommandSpec(
+    command_name="scenes delete",
+    client_method="scenes_delete",
+)
+
 SCENE_MOVE_SPEC = SceneMoveCommandSpec(
     command_name="scenes move",
     client_method="scenes_move",
@@ -250,7 +255,7 @@ def scenes_create(
 def scenes_name_set(
     ctx: typer.Context,
     scene: Annotated[int, typer.Argument(help="Scene index (0-based)")],
-    name: Annotated[str, typer.Argument(help="New scene name")],
+    name: Annotated[str, typer.Argument(help="New scene name; pass '' to clear it")],
 ) -> None:
     run_scene_value_command_spec(
         ctx,
@@ -268,6 +273,18 @@ def scenes_fire(
     run_scene_command_spec(
         ctx,
         spec=SCENE_FIRE_SPEC,
+        scene=scene,
+    )
+
+
+@scenes_app.command("delete")
+def scenes_delete(
+    ctx: typer.Context,
+    scene: Annotated[int, typer.Argument(help="Scene index (0-based)")],
+) -> None:
+    run_scene_command_spec(
+        ctx,
+        spec=SCENE_DELETE_SPEC,
         scene=scene,
     )
 

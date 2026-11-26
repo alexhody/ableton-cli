@@ -475,6 +475,9 @@ class _AbletonClientGeneratedMixin:
     def return_tracks_list(self) -> dict[str, Any]:
         return self._call("return_tracks_list")
 
+    def scenes_delete(self, scene: int) -> dict[str, Any]:
+        return self._call("scenes_delete", {"scene": scene})
+
     def scenes_list(self) -> dict[str, Any]:
         return self._call("scenes_list")
 

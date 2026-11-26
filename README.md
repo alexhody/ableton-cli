@@ -114,6 +114,7 @@ uv run ableton-cli arrangement clip delete 0 --start 0 --end 16
 uv run ableton-cli arrangement from-session --scenes "0:24,1:48"
 uv run ableton-cli clip fire 0 0
 uv run ableton-cli scenes list
+uv run ableton-cli scenes delete 3
 uv run ableton-cli browser search drift --item-type loadable
 uv run ableton-cli browser search "Drum Rack" --path drums --item-type loadable --limit 10
 uv run ableton-cli browser search "Kit" --path drums --item-type loadable --limit 10
