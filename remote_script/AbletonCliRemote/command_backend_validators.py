@@ -83,7 +83,7 @@ def _uri_or_path_target(name: str, value: Any) -> str:
         return parsed
     raise _invalid_argument(
         message=f"{name} must include '/' (path) or ':' (uri)",
-        hint="Use a browser path like grooves/My Groove.agr or URI like groove:example.",
+        hint="Use a .agr path or URI from 'browser search .agr'.",
     )
 
 

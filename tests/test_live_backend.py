@@ -267,7 +267,7 @@ class _ArrangementClip(_ExtendedNoteMixin):
     is_audio_clip: bool
     is_midi_clip: bool
     file_path: str | None = None
-    groove: str | None = None
+    groove: _Groove | None = None
     groove_amount: float = 0.5
     _notes: list[_MidiNote] = field(default_factory=list)
     _next_note_id: int = 1
@@ -289,7 +289,7 @@ class _ArrangementAudioClip:
         self.loop_end = 8.0
         self.start_marker = 0.0
         self.end_marker = 8.0
-        self.groove: str | None = None
+        self.groove: _Groove | None = None
         self.groove_amount = 0.5
 
     @property
@@ -328,7 +328,7 @@ class _Clip(_ExtendedNoteMixin):
         self.is_playing = False
         self.is_recording = False
         self.muted = False
-        self.groove: str | None = None
+        self.groove: _Groove | None = None
         self.groove_amount = 0.5
         self._notes: list[_MidiNote] = []
         self._next_note_id = 1
@@ -434,6 +434,21 @@ class _Track:
 
 
 @dataclass(slots=True)
+class _Groove:
+    """Live.Groove.Groove: a Groove Pool entry, named after its .agr file."""
+
+    name: str
+
+
+@dataclass(slots=True)
+class _GroovePool:
+    grooves: list[_Groove] = field(default_factory=list)
+
+
+HIP_HOP_GROOVE_PATH = "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"
+
+
+@dataclass(slots=True)
 class _BrowserItem:
     name: str
     uri: str
@@ -517,27 +532,41 @@ class _Browser:
         )
         self.audio_effects = _BrowserItem(name="Audio Effects", uri="cat:audio", children=[])
         self.midi_effects = _BrowserItem(name="MIDI Effects", uri="cat:midi", children=[])
-        self.grooves = _BrowserItem(
-            name="Grooves",
-            uri="cat:grooves",
+        # Live 12 has no grooves browser root: .agr files sit under User Library and Packs.
+        self.user_library = _BrowserItem(
+            name="User Library",
+            uri="query:UserLibrary",
             children=[
                 _BrowserItem(
-                    name="Hip Hop Boom Bap 16ths 90 bpm.agr",
-                    uri="groove:hip-hop-boom-bap-16ths-90",
-                    is_device=False,
-                    is_loadable=True,
-                ),
-                _BrowserItem(
-                    name="Hip Hop Subtle 16ths 80 bpm.agr",
-                    uri="groove:hip-hop-subtle-16ths-80",
-                    is_device=False,
-                    is_loadable=True,
-                ),
+                    name="Grooves",
+                    uri="query:UserLibrary#Grooves",
+                    children=[
+                        _BrowserItem(
+                            name="Hip Hop Boom Bap 16ths 90 bpm.agr",
+                            uri="groove:hip-hop-boom-bap-16ths-90",
+                            is_device=False,
+                            is_loadable=True,
+                        ),
+                        _BrowserItem(
+                            name="Hip Hop Subtle 16ths 80 bpm.agr",
+                            uri="groove:hip-hop-subtle-16ths-80",
+                            is_device=False,
+                            is_loadable=True,
+                        ),
+                    ],
+                )
             ],
         )
+        self.loaded_items: list[str] = []
 
     def load_item(self, item: _BrowserItem) -> None:
         uri = str(getattr(item, "uri", ""))
+        self.loaded_items.append(uri)
+        if str(item.name).endswith(".agr"):
+            # Loading a groove adds a copy to the Groove Pool, named without ".agr".
+            self._song.groove_pool.grooves.append(_Groove(str(item.name)[: -len(".agr")]))
+            return
+
         if uri == "rack:drums":
             target = self._song.view.selected_track
             target.devices.append(
@@ -570,7 +599,7 @@ class _Browser:
                 slot.create_clip(length=2.0)
             assert slot.clip is not None
             slot.clip.set_notes(((60, 0.0, 0.5, 100, False),))
-            slot.clip.groove = "groove:hip-hop-boom-bap-16ths-90"
+            slot.clip.groove = _Groove("Hip Hop Boom Bap 16ths 90 bpm")
             slot.clip.groove_amount = 0.5
             target_track.name = str(item.name)
             return
@@ -631,6 +660,7 @@ class _Song:
         self.available_cue_routings = ["Master", "Ext. Out"]
         self.playback_calls: list[str] = []
         self.last_stop_time = 0.0
+        self.groove_pool = _GroovePool()
 
     def start_playing(self) -> None:
         self.playback_calls.append("start_playing")
@@ -670,6 +700,9 @@ class _Song:
 
     def delete_track(self, index: int) -> None:
         del self.tracks[index]
+
+    def delete_scene(self, index: int) -> None:
+        del self.scenes[index]
 
     def move_scene(self, from_index: int, to_index: int) -> None:
         scene = self.scenes.pop(from_index)
@@ -1861,7 +1894,7 @@ def test_live_backend_load_existing_mode_notes_mode_imports_length_and_groove() 
     target_slot.create_clip(length=2.0)
     assert target_slot.clip is not None
     target_slot.clip.set_notes(((72, 0.25, 0.5, 90, False),))
-    target_slot.clip.groove = "groove:old"
+    target_slot.clip.groove = _Groove("Old")
     target_slot.clip.groove_amount = 0.1
 
     browser = surface.application().browser
@@ -1877,13 +1910,8 @@ def test_live_backend_load_existing_mode_notes_mode_imports_length_and_groove() 
         source_slot.create_clip(length=8.0)
         assert source_slot.clip is not None
         source_slot.clip.set_notes(((60, 0.0, 0.5, 100, False),))
-        source_slot.clip.groove = "groove:hip-hop-boom-bap-16ths-90"
+        source_slot.clip.groove = _Groove("Hip Hop Boom Bap 16ths 90 bpm")
         source_slot.clip.groove_amount = 0.7
-        source_slot.clip._ableton_cli_groove_uri = "groove:hip-hop-boom-bap-16ths-90"  # noqa: SLF001
-        source_slot.clip._ableton_cli_groove_path = (  # noqa: SLF001
-            "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"
-        )
-        source_slot.clip._ableton_cli_groove_name = "Hip Hop Boom Bap 16ths 90 bpm.agr"  # noqa: SLF001
         surface.song().tracks.append(new_track)
 
     browser.load_item = _load_item_force_new_track  # type: ignore[method-assign]
@@ -1913,9 +1941,8 @@ def test_live_backend_load_existing_mode_notes_mode_imports_length_and_groove() 
     assert destination_clip is not None
     assert destination_clip.length == 8.0
     groove = backend.clip_groove_get(0, 1)
-    assert groove["groove_uri"] == "groove:hip-hop-boom-bap-16ths-90"
-    assert groove["groove_path"] == "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"
-    assert groove["groove_name"] == "Hip Hop Boom Bap 16ths 90 bpm.agr"
+    assert groove["has_groove"] is True
+    assert groove["groove_name"] == "Hip Hop Boom Bap 16ths 90 bpm"
 
 
 def test_live_backend_load_existing_mode_notes_mode_ignores_read_only_target_properties() -> None:
@@ -1927,9 +1954,6 @@ def test_live_backend_load_existing_mode_notes_mode_ignores_read_only_target_pro
             "groove_assignment",
             "groove_amount",
             "groove_amount_value",
-            "_ableton_cli_groove_uri",
-            "_ableton_cli_groove_path",
-            "_ableton_cli_groove_name",
         }
 
         def __init__(self, length: float, name: str = "") -> None:
@@ -1964,13 +1988,8 @@ def test_live_backend_load_existing_mode_notes_mode_ignores_read_only_target_pro
         source_slot.create_clip(length=8.0)
         assert source_slot.clip is not None
         source_slot.clip.set_notes(((60, 0.0, 0.5, 100, False),))
-        source_slot.clip.groove = "groove:hip-hop-boom-bap-16ths-90"
+        source_slot.clip.groove = _Groove("Hip Hop Boom Bap 16ths 90 bpm")
         source_slot.clip.groove_amount = 0.7
-        source_slot.clip._ableton_cli_groove_uri = "groove:hip-hop-boom-bap-16ths-90"  # noqa: SLF001
-        source_slot.clip._ableton_cli_groove_path = (  # noqa: SLF001
-            "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"
-        )
-        source_slot.clip._ableton_cli_groove_name = "Hip Hop Boom Bap 16ths 90 bpm.agr"  # noqa: SLF001
         surface.song().tracks.append(new_track)
 
     browser.load_item = _load_item_force_new_track  # type: ignore[method-assign]
@@ -2876,10 +2895,11 @@ def test_live_backend_clip_groove_commands() -> None:
     backend = LiveBackend(_SurfaceStub())
     backend.create_clip(0, 0, 4.0)
 
-    set_result = backend.clip_groove_set(0, 0, "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr")
+    set_result = backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)
     assert set_result["has_groove"] is True
-    assert set_result["groove_path"] == "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"
+    assert set_result["groove_path"] == HIP_HOP_GROOVE_PATH
     assert set_result["groove_uri"] == "groove:hip-hop-boom-bap-16ths-90"
+    assert set_result["groove_name"] == "Hip Hop Boom Bap 16ths 90 bpm"
 
     amount_result = backend.clip_groove_amount_set(0, 0, 0.6)
     assert amount_result["has_groove"] is True
@@ -2888,7 +2908,7 @@ def test_live_backend_clip_groove_commands() -> None:
     current = backend.clip_groove_get(0, 0)
     assert current["has_groove"] is True
     assert current["amount"] == 0.6
-    assert current["groove_name"] == "Hip Hop Boom Bap 16ths 90 bpm.agr"
+    assert current["groove_name"] == "Hip Hop Boom Bap 16ths 90 bpm"
 
     cleared = backend.clip_groove_clear(0, 0)
     assert cleared["has_groove"] is False

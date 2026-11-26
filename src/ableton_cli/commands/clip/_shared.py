@@ -133,7 +133,7 @@ def require_uri_or_path_target(target: str) -> str:
         return parsed
     raise invalid_argument(
         message=f"target must include '/' (path) or ':' (uri), got {parsed!r}",
-        hint="Use a path like grooves/Hip Hop Boom Bap 16ths 90 bpm.agr or groove URI.",
+        hint="Use a .agr path or URI from 'browser search .agr'.",
     )
 
 

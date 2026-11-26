@@ -343,7 +343,8 @@ uv run ableton-cli clip envelope shape 0 0 --device-index 0 --parameter-key filt
 uv run ableton-cli clip envelope clear 0 0 --device-index 0 --parameter-key filter_cutoff
 uv run ableton-cli clip envelope clear 0 0 --all
 uv run ableton-cli clip groove get 0 0
-uv run ableton-cli clip groove set 0 0 grooves/Hip\ Hop\ Boom\ Bap\ 16ths\ 90\ bpm.agr
+uv run ableton-cli browser search .agr --path user_library
+uv run ableton-cli clip groove set 0 0 "user_library/Grooves/My Groove.agr"
 uv run ableton-cli clip groove amount set 0 0 0.6
 uv run ableton-cli clip groove clear 0 0
 uv run ableton-cli clip name set 0 0 "Hook"
@@ -376,6 +377,13 @@ uv run ableton-cli clip file replace 0 0 --audio-path /tmp/replacement.wav
 uv run ableton-cli clip file path get 0 0
 ```
 
+Grooves: Live 12 has no `grooves` browser root. `.agr` files sit under `user_library/Grooves/...`
+and `packs/Core Library/Grooves/...`, so find one with `browser search .agr --path <root>`.
+`clip groove set` reuses a groove already in Live's Groove Pool with the same name, and otherwise
+loads the `.agr` into the pool first. `clip groove get` reports only `groove_name` (the pool
+entry); the browser `groove_uri`/`groove_path` are returned by `set` only. Live has no per-clip
+groove amount, so `clip groove amount set` fails with `not_supported_by_live_api`.
+
 ### Scenes
 
 ```bash
@@ -383,9 +391,15 @@ uv run ableton-cli scenes list
 uv run ableton-cli scenes create
 uv run ableton-cli scenes create --index 1
 uv run ableton-cli scenes name set 1 "Build"
+uv run ableton-cli scenes name set 1 ""
 uv run ableton-cli scenes fire 1
-uv run ableton-cli scenes move 1 2
+uv run ableton-cli scenes delete 1
+uv run ableton-cli scenes move 1 2   # fails: Live 12 has no scene move API
 ```
+
+`scenes name set <scene> ""` clears a scene name. `scenes delete` refuses to delete the last
+scene. `scenes move` stays in the command surface but always fails with
+`not_supported_by_live_api`, because Live 12 has no scene move API.
 
 ### Browser
 
@@ -726,6 +740,7 @@ uv run ableton-cli --output json ping
 - `create_scene` -> `uv run ableton-cli --output json scenes create [--index <index>]`
 - `set_scene_name` -> `uv run ableton-cli --output json scenes name set <scene> <name>`
 - `fire_scene` -> `uv run ableton-cli --output json scenes fire <scene>`
+- `scenes_delete` -> `uv run ableton-cli --output json scenes delete <scene>`
 - `scenes_move` -> `uv run ableton-cli --output json scenes move <from> <to>`
 - `stop_all_clips` -> `uv run ableton-cli --output json session stop-all-clips`
 - `get_browser_tree` -> `uv run ableton-cli --output json browser tree [category_type]`

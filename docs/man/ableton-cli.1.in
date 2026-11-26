@@ -42,6 +42,7 @@ Scenes and mixer operations:
   ableton-cli scenes list
   ableton-cli scenes create --index 1
   ableton-cli scenes fire 1
+  ableton-cli scenes delete 3
   ableton-cli session stop-all-clips
   ableton-cli session snapshot
   ableton-cli track mute set 0 true

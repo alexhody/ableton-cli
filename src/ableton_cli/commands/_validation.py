@@ -29,7 +29,6 @@ DEVICE_INDEX_HINT = "Use a valid device index from 'ableton-cli track info'."
 SCENE_INDEX_HINT = "Use a valid scene index from 'scenes list'."
 SCENE_SOURCE_HINT = "Use a valid source scene index from 'scenes list'."
 SCENE_DESTINATION_HINT = "Use a valid destination scene index from 'scenes list'."
-SCENE_NAME_HINT = "Pass a non-empty scene name."
 SCENE_INSERT_INDEX_HINT = "Use -1 for append or a non-negative insertion index."
 TRACK_NAME_HINT = "Pass a non-empty track name."
 VOLUME_VALUE_HINT = "Use a normalized volume value such as 0.75."
@@ -115,8 +114,8 @@ def require_scene_and_value[TValue](scene: int, value: TValue) -> tuple[int, TVa
 
 def require_scene_and_name(scene: int, value: str) -> tuple[int, str]:
     valid_scene = require_scene_index(scene)
-    valid_name = require_non_empty_string("name", value, hint=SCENE_NAME_HINT)
-    return valid_scene, valid_name
+    # An empty name clears the scene name, as clearing it in Live does.
+    return valid_scene, value.strip()
 
 
 def require_scene_move(from_scene: int, to_scene: int) -> tuple[int, int]:

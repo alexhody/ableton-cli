@@ -9,6 +9,7 @@ from .command_backend_validators import (
     _as_bool,
     _as_float,
     _as_int,
+    _as_str,
     _clip_length,
     _clip_notes_filter,
     _clip_quantize_grid,
@@ -556,7 +557,8 @@ def _handle_create_scene(backend: CommandBackend, args: dict[str, Any]) -> dict[
 
 def _handle_set_scene_name(backend: CommandBackend, args: dict[str, Any]) -> dict[str, Any]:
     scene = _track_index("scene", args.get("scene"))
-    name = _non_empty_string("name", args.get("name"))
+    # An empty name clears the scene name.
+    name = _as_str("name", args.get("name")).strip()
     return backend.set_scene_name(scene, name)
 
 
@@ -569,6 +571,11 @@ def _handle_scenes_move(backend: CommandBackend, args: dict[str, Any]) -> dict[s
     from_index = _track_index("from", args.get("from"))
     to_index = _track_index("to", args.get("to"))
     return backend.scenes_move(from_index, to_index)
+
+
+def _handle_scenes_delete(backend: CommandBackend, args: dict[str, Any]) -> dict[str, Any]:
+    scene = _track_index("scene", args.get("scene"))
+    return backend.scenes_delete(scene)
 
 
 def _handle_stop_all_clips(backend: CommandBackend, _args: dict[str, Any]) -> dict[str, Any]:
@@ -620,6 +627,7 @@ TRACKS_CLIPS_HANDLERS: dict[str, Handler] = {
     "set_scene_name": _handle_set_scene_name,
     "fire_scene": _handle_fire_scene,
     "scenes_move": _handle_scenes_move,
+    "scenes_delete": _handle_scenes_delete,
     "stop_all_clips": _handle_stop_all_clips,
     "tracks_delete": _handle_tracks_delete,
 }

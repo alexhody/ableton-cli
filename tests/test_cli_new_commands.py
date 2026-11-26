@@ -310,7 +310,7 @@ class _ClientStub:
             "clip": clip,
             "has_groove": True,
             "groove_uri": "groove:hip-hop-boom-bap-16ths-90",
-            "groove_path": "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
+            "groove_path": "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
             "groove_name": "Hip Hop Boom Bap 16ths 90 bpm.agr",
             "amount": 0.5,
         }
@@ -322,7 +322,7 @@ class _ClientStub:
             "target": target,
             "has_groove": True,
             "groove_uri": "groove:hip-hop-boom-bap-16ths-90",
-            "groove_path": "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
+            "groove_path": "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
             "groove_name": "Hip Hop Boom Bap 16ths 90 bpm.agr",
             "amount": 0.5,
         }
@@ -333,7 +333,7 @@ class _ClientStub:
             "clip": clip,
             "has_groove": True,
             "groove_uri": "groove:hip-hop-boom-bap-16ths-90",
-            "groove_path": "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
+            "groove_path": "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
             "groove_name": "Hip Hop Boom Bap 16ths 90 bpm.agr",
             "amount": value,
         }
@@ -581,6 +581,9 @@ class _ClientStub:
 
     def scenes_move(self, from_index: int, to_index: int):  # noqa: ANN201
         return {"from": from_index, "to": to_index, "moved": True}
+
+    def scenes_delete(self, scene: int):  # noqa: ANN201
+        return {"scene": scene, "deleted": True, "scene_count": 1}
 
     def tracks_delete(self, track: int):  # noqa: ANN201
         return {"track": track, "deleted": True}
@@ -1539,7 +1542,7 @@ def test_clip_groove_commands_output_json_envelope(runner, cli_app, monkeypatch)
             "set",
             "0",
             "1",
-            "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
+            "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr",
         ],
     )
     amount_result = runner.invoke(
@@ -1562,7 +1565,9 @@ def test_clip_groove_commands_output_json_envelope(runner, cli_app, monkeypatch)
     cleared_payload = json.loads(cleared.stdout)
 
     assert gotten_payload["result"]["has_groove"] is True
-    assert set_payload["result"]["target"] == "grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"
+    assert (
+        set_payload["result"]["target"] == "user_library/Grooves/Hip Hop Boom Bap 16ths 90 bpm.agr"
+    )
     assert amount_payload["result"]["amount"] == 0.7
     assert cleared_payload["result"]["has_groove"] is False
 
@@ -2399,6 +2404,28 @@ def test_scenes_move_command_outputs_json_envelope(runner, cli_app, monkeypatch)
     payload = json.loads(moved.stdout)
     assert payload["ok"] is True
     assert payload["result"] == {"from": 3, "to": 1, "moved": True}
+
+
+def test_scenes_delete_command_outputs_json_envelope(runner, cli_app, monkeypatch) -> None:
+    from ableton_cli.commands import scenes
+
+    monkeypatch.setattr(scenes, "get_client", lambda ctx: _ClientStub())
+
+    deleted = runner.invoke(cli_app, ["--output", "json", "scenes", "delete", "1"])
+
+    assert deleted.exit_code == 0, deleted.output
+    assert json.loads(deleted.stdout)["result"] == {"scene": 1, "deleted": True, "scene_count": 1}
+
+
+def test_scenes_name_set_accepts_an_empty_name(runner, cli_app, monkeypatch) -> None:
+    from ableton_cli.commands import scenes
+
+    monkeypatch.setattr(scenes, "get_client", lambda ctx: _ClientStub())
+
+    cleared = runner.invoke(cli_app, ["--output", "json", "scenes", "name", "set", "0", ""])
+
+    assert cleared.exit_code == 0, cleared.output
+    assert json.loads(cleared.stdout)["result"]["name"] == ""
 
 
 def test_tracks_delete_command_outputs_json_envelope(runner, cli_app, monkeypatch) -> None:

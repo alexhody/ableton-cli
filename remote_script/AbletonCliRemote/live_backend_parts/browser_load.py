@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from gzip import decompress as gzip_decompress
 from pathlib import Path
 from time import monotonic, sleep
@@ -13,6 +15,8 @@ _ALLOWED_TARGET_TRACK_MODES = frozenset({"auto", "existing", "new"})
 _BROWSER_IMPORT_SETTLE_TIMEOUT_SECONDS = 1.0
 _BROWSER_IMPORT_SETTLE_POLL_INTERVAL_SECONDS = 0.01
 _AUDIO_SAMPLE_EXTENSIONS = (".wav", ".aif", ".aiff", ".flac", ".mp3", ".ogg", ".m4a", ".caf")
+_SONG_VIEW_SELECTION_ATTRS = ("selected_track", "selected_scene", "highlighted_clip_slot")
+_GROOVE_FILE_SUFFIX = ".agr"
 
 
 class LiveBackendBrowserLoadMixin:
@@ -58,6 +62,67 @@ class LiveBackendBrowserLoadMixin:
                 hint="Use a Live version exposing song.view.selected_track.",
             )
         view.selected_track = target_track
+
+    @contextmanager
+    def _restoring_song_selection(self, song: Any) -> Iterator[None]:
+        view = getattr(song, "view", None)
+        saved = {
+            attr: getattr(view, attr)
+            for attr in _SONG_VIEW_SELECTION_ATTRS
+            if view is not None and hasattr(view, attr)
+        }
+        try:
+            yield
+        finally:
+            for attr, value in saved.items():
+                setattr(view, attr, value)
+
+    def _pool_groove_named(self, name: str) -> Any | None:
+        pool = getattr(self._ctx._song(), "groove_pool", None)
+        if pool is None:
+            raise _not_supported_by_live_api(
+                message="Groove pool API is not available in Live API",
+                hint="Use a Live version exposing Song.groove_pool.",
+            )
+        for groove in list(getattr(pool, "grooves", []) or []):
+            if str(getattr(groove, "name", "")) == name:
+                return groove
+        return None
+
+    def _groove_for_browser_item(self, *, item: Any, track: int, clip: int) -> Any:
+        """Return the Groove Pool entry for a browser .agr item, loading it if needed.
+
+        A groove already in the pool is reused by name, so repeated assignments do
+        not fill the pool with copies. Loading highlights the target clip slot
+        first, so a load that Live applies to the highlighted clip lands on the
+        clip being changed, and the previous selection is restored afterwards.
+        """
+        item_name = str(getattr(item, "name", "")).strip()
+        groove_name = item_name[: -len(_GROOVE_FILE_SUFFIX)]
+        existing = self._pool_groove_named(groove_name)
+        if existing is not None:
+            return existing
+
+        song = self._ctx._song()
+        target_track = self._ctx._track_at(track)
+        with self._restoring_song_selection(song):
+            self._select_track_for_load(song=song, target_track=target_track)
+            self._select_clip_slot_for_load(song=song, target_track=target_track, clip_slot=clip)
+            self._browser().load_item(item)
+
+        deadline = monotonic() + _BROWSER_IMPORT_SETTLE_TIMEOUT_SECONDS
+        while True:
+            loaded = self._pool_groove_named(groove_name)
+            if loaded is not None:
+                return loaded
+            if monotonic() >= deadline:
+                raise CommandError(
+                    code="INTERNAL_ERROR",
+                    message=f"Live did not add groove '{groove_name}' to the Groove Pool",
+                    hint="Retry, or drag the groove into the Groove Pool in Live and retry.",
+                    details={"groove_name": groove_name},
+                )
+            sleep(_BROWSER_IMPORT_SETTLE_POLL_INTERVAL_SECONDS)
 
     def _focus_session_view_for_load(self) -> None:
         app = self._ctx._application()
@@ -449,18 +514,6 @@ class LiveBackendBrowserLoadMixin:
                 imported = True
             break
 
-        for attribute in (
-            "_ableton_cli_groove_uri",
-            "_ableton_cli_groove_path",
-            "_ableton_cli_groove_name",
-        ):
-            if not hasattr(source_clip, attribute):
-                continue
-            try:
-                setattr(target_clip, attribute, getattr(source_clip, attribute))
-            except Exception:
-                continue
-            imported = True
         return imported
 
     @staticmethod
@@ -724,36 +777,15 @@ class LiveBackendBrowserLoadMixin:
         create_midi_track(-1)
         temporary_track = self._ctx._track_at(temporary_track_index)
 
-        view = getattr(song, "view", None)
-        has_selected_track = view is not None and hasattr(view, "selected_track")
-        has_selected_scene = view is not None and hasattr(view, "selected_scene")
-        has_highlighted_clip_slot = view is not None and hasattr(view, "highlighted_clip_slot")
-        previous_selected_track = (
-            getattr(view, "selected_track", None) if has_selected_track else None
-        )
-        previous_selected_scene = (
-            getattr(view, "selected_scene", None) if has_selected_scene else None
-        )
-        previous_highlighted_clip_slot = (
-            getattr(view, "highlighted_clip_slot", None) if has_highlighted_clip_slot else None
-        )
-        self._focus_session_view_for_load()
-        self._select_track_for_load(song=song, target_track=temporary_track)
-        self._select_clip_slot_for_load(song=song, target_track=temporary_track, clip_slot=0)
-        try:
+        with self._restoring_song_selection(song):
+            self._focus_session_view_for_load()
+            self._select_track_for_load(song=song, target_track=temporary_track)
+            self._select_clip_slot_for_load(song=song, target_track=temporary_track, clip_slot=0)
             try:
                 self._browser().load_item(item)
             except Exception:
                 self._cleanup_created_tracks(song=song, base_track_count=base_track_count)
                 raise
-        finally:
-            if view is not None:
-                if has_selected_track:
-                    view.selected_track = previous_selected_track
-                if has_selected_scene:
-                    view.selected_scene = previous_selected_scene
-                if has_highlighted_clip_slot:
-                    view.highlighted_clip_slot = previous_highlighted_clip_slot
 
         created_tracks, source_track = self._wait_for_created_clip_track(
             song=song,
