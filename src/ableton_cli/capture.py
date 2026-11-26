@@ -365,9 +365,7 @@ def _capture_soloed(
         finally:
             client.tracks_delete(temporary)
         also_soloed = [
-            str(item["name"])
-            for item in _soloed_tracks(client)
-            if int(item["index"]) != track
+            str(item["name"]) for item in _soloed_tracks(client) if int(item["index"]) != track
         ]
     finally:
         client.track_solo_set(track_ref, False)

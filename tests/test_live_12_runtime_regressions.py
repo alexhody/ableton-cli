@@ -398,7 +398,9 @@ def test_clip_groove_set_reuses_a_groove_already_in_the_pool() -> None:
 
 def test_clip_groove_set_accepts_a_pack_uri_containing_a_slash() -> None:
     backend, surface = _strict_groove_backend()
-    pack_uri = "query:LivePacks#www.ableton.com/0:Grooves:Hip%20Hop%20Boom%20Bap%2016ths%2090%20bpm.agr"
+    pack_uri = (
+        "query:LivePacks#www.ableton.com/0:Grooves:Hip%20Hop%20Boom%20Bap%2016ths%2090%20bpm.agr"
+    )
     surface.application().browser.user_library.children[0].children[0].uri = pack_uri
 
     result = backend.clip_groove_set(0, 0, pack_uri)
