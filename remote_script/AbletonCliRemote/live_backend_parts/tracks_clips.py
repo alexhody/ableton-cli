@@ -7,6 +7,24 @@ from ..command_backend import CommandError
 from .base import _invalid_argument, _not_supported_by_live_api
 
 
+def _sample_time_at_beat(markers: Any, beat_time: float) -> float | None:
+    """Sample time at ``beat_time`` on the clip's current warp curve.
+
+    Interpolates between the surrounding markers, or extrapolates the first/last
+    segment, so a marker added there does not change playback timing.
+    """
+    points = sorted((float(marker.beat_time), float(marker.sample_time)) for marker in markers)
+    if len(points) < 2:
+        return None
+    segments = list(zip(points, points[1:], strict=False))
+    (beat0, sample0), (beat1, sample1) = next(
+        (segment for segment in segments if beat_time <= segment[1][0]), segments[-1]
+    )
+    if beat1 == beat0:
+        return None
+    return sample0 + (beat_time - beat0) * (sample1 - sample0) / (beat1 - beat0)
+
+
 class LiveBackendTracksClipsMixin:
     _WARP_MODE_VALUES = {
         "beats": 0,
@@ -557,14 +575,20 @@ class LiveBackendTracksClipsMixin:
             if sample_time is not None:
                 marker["sample_time"] = float(sample_time)
         else:
-            # The Python LOM needs a Live.Clip.WarpMarker; a dict is rejected by the
-            # C++ converter. Without sample_time Live keeps the current timing.
-            if sample_time is None:
-                marker = Live.Clip.WarpMarker(beat_time=float(beat_time))
-            else:
-                marker = Live.Clip.WarpMarker(
-                    beat_time=float(beat_time), sample_time=float(sample_time)
+            # The Python LOM rejects a dict here and its WarpMarker constructor
+            # requires both times, so derive sample_time from the existing
+            # markers when it is omitted. That keeps the clip's current timing.
+            resolved_sample_time = sample_time
+            if resolved_sample_time is None:
+                resolved_sample_time = _sample_time_at_beat(
+                    getattr(clip_obj, "warp_markers", ()), float(beat_time)
                 )
+            if resolved_sample_time is None:
+                raise _invalid_argument(
+                    message="Cannot derive sample_time for the new warp marker",
+                    hint="Pass --sample-time explicitly.",
+                )
+            marker = Live.Clip.WarpMarker(float(resolved_sample_time), float(beat_time))
         add_warp_marker(marker)
         return {
             "track": track,

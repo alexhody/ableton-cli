@@ -11,6 +11,8 @@ strictness so the fixes stay covered without a running Live.
 from __future__ import annotations
 
 import json
+import sys
+import types
 from dataclasses import dataclass
 from typing import Any
 
@@ -215,3 +217,36 @@ def test_warp_marker_list_is_json_serializable() -> None:
         {"beat_time": 0.0, "sample_time": 0.0},
         {"beat_time": 0.03125, "sample_time": 0.0161},
     ]
+
+
+class _LiveWarpMarker:
+    """Live.Clip.WarpMarker: the constructor requires (sample_time, beat_time)."""
+
+    def __init__(self, sample_time: float, beat_time: float) -> None:
+        self.sample_time = sample_time
+        self.beat_time = beat_time
+
+
+def test_warp_marker_add_builds_live_warp_marker_on_current_timing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_live = types.ModuleType("Live")
+    fake_live.Clip = types.SimpleNamespace(WarpMarker=_LiveWarpMarker)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "Live", fake_live)
+    surface = _SurfaceStub()
+    slot = surface.song().tracks[1].clip_slots[0]
+    slot.clip = _Clip(length=12.0, is_audio_clip=True, is_midi_clip=False, file_path="/tmp/a.wav")
+    slot.clip.warping = True
+    # Live's default markers on a fresh warped clip at 116 BPM.
+    slot.clip.warp_markers = (_WarpMarker(0.0, 0.0), _WarpMarker(0.03125, 0.03125 * 60 / 116))
+    added: list[Any] = []
+    slot.clip.add_warp_marker = added.append
+    backend = LiveBackend(surface)
+
+    backend.clip_warp_marker_add(1, 0, beat_time=4.0, sample_time=None)
+    backend.clip_warp_marker_add(1, 0, beat_time=8.0, sample_time=3.5)
+
+    assert all(isinstance(marker, _LiveWarpMarker) for marker in added)
+    assert added[0].beat_time == 4.0
+    assert added[0].sample_time == pytest.approx(4.0 * 60 / 116)
+    assert (added[1].beat_time, added[1].sample_time) == (8.0, 3.5)
