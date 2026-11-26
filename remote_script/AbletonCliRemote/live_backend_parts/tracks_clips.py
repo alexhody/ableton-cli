@@ -189,17 +189,22 @@ class LiveBackendTracksClipsMixin:
     def clip_groove_set(self, track: int, clip: int, target: str) -> dict[str, Any]:
         clip_obj, groove_attr = self._require_clip_with_groove_support(track=track, clip=clip)
         item, target_info = self._resolve_groove_target(target)
-        groove = self._ctx.services.browser._groove_for_browser_item(
+        groove, added_to_pool = self._ctx.services.browser._groove_for_browser_item(
             item=item, track=track, clip=clip
         )
         setattr(clip_obj, groove_attr, groove)
-        return self._clip_groove_payload(
+        payload = self._clip_groove_payload(
             track=track,
             clip=clip,
             clip_obj=clip_obj,
             groove_attr=groove_attr,
             target_info=target_info,
         )
+        payload["added_to_groove_pool"] = added_to_pool
+        # A groove loaded into a pool without a default becomes the Set's default
+        # groove for every new clip, and the API cannot undo that.
+        payload["warnings"] = ["groove_may_be_default_for_new_clips"] if added_to_pool else []
+        return payload
 
     def clip_groove_amount_set(self, track: int, clip: int, value: float) -> dict[str, Any]:
         clip_obj, groove_attr = self._require_clip_with_groove_support(track=track, clip=clip)
