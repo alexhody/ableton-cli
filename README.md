@@ -81,7 +81,7 @@ uv run ableton-cli tracks list
 uv run ableton-cli track volume get --track-index 0
 uv run ableton-cli track meter get --track-index 0 --samples 20 --interval-ms 50
 uv run ableton-cli track volume set 0.7 --track-index 0
-uv run ableton-cli track panning set --track-index 0 -- -0.25
+uv run ableton-cli track panning set -0.25 --track-index 0
 uv run ableton-cli track send set 1 0.6 --track-index 0
 uv run ableton-cli track routing input get --selected-track
 uv run ableton-cli track routing output set --type Master --channel 3/4 --track-name "Bass"
@@ -92,7 +92,7 @@ uv run ableton-cli master info
 uv run ableton-cli master meter get --samples 20 --interval-ms 50
 uv run ableton-cli master devices list
 uv run ableton-cli device insert Utility --main
-uv run ableton-cli device parameter set-display --main --device-name "Glue Compressor" --parameter-name Threshold -- -10
+uv run ableton-cli device parameter set-display -10 --main --device-name "Glue Compressor" --parameter-name Threshold
 uv run ableton-cli session capture-tracks --track-index 0 --track-index 9 --start 304 --bars 8 --bypass-main-devices
 uv run ableton-cli audio transient analyze --path ./loops/drum-break.wav --bpm 174 --max-slices 16
 uv run ableton-cli remix mastering target set --project ./proj/remix_project.json --profile anime-club-demo
@@ -100,7 +100,7 @@ uv run ableton-cli remix mastering report add --project ./proj/remix_project.jso
 uv run ableton-cli remix mastering plan --project ./proj/remix_project.json
 uv run ableton-cli remix mastering apply --project ./proj/remix_project.json --dry-run
 uv run ableton-cli remix mastering qa --project ./proj/remix_project.json --render ./renders/remix.wav
-uv run ableton-cli mixer crossfader set -- -0.2
+uv run ableton-cli mixer crossfader set -0.2
 uv run ableton-cli mixer cue-routing get
 uv run ableton-cli clip create 0 0 --length 4
 uv run ableton-cli clip notes add 0 0 --notes-json '[{"pitch":60,"start_time":0.0,"duration":0.5,"velocity":100,"mute":false}]'
@@ -123,7 +123,7 @@ uv run ableton-cli browser load-drum-kit 0 <rack-uri-from-search> --kit-uri <kit
 uv run ableton-cli batch run --steps-file ./steps.json
 uv run ableton-cli device parameter set 0.25 --track-index 0 --device-index 0 --parameter-index 0
 uv run ableton-cli device parameters list --track-name Vox --device-name "Auto Shift"
-uv run ableton-cli device parameter set-display --track-name Bass --device-name Compressor --parameter-name Threshold -- -18
+uv run ableton-cli device parameter set-display -18 --track-name Bass --device-name Compressor --parameter-name Threshold
 uv run ableton-cli device parameter select RMS --track-name Bass --device-name Compressor --parameter-name Model
 uv run ableton-cli device sidechain set --type "1-Kick" --channel "Post FX" --track-name Bass --device-name Compressor
 uv run ableton-cli device insert Compressor --track-name Bass
@@ -514,7 +514,7 @@ If a command is exposed by CLI/Remote but Live API cannot perform it, the comman
 - `error.code=INVALID_ARGUMENT`
 - `error.details.reason=not_supported_by_live_api`
 
-This currently applies to API-limited operations such as `song new/undo/redo/save/export`, `arrangement record start|stop`, `scenes move`, and `tracks delete` when the running Live API lacks the required primitive.
+On Live 12.4 this applies to `song new`, `song save`, `song export audio`, `scenes move`, `mixer cue-routing set`, `clip file replace`, `arrangement clip file replace`, `clip groove amount set`, and `clip groove clear` on a clip that has a groove. `song undo/redo`, `arrangement record start|stop`, and `tracks delete` fail the same way only on Live versions whose API lacks the primitive.
 
 `clip cut-to-drum-rack` builds each pad from Live 12.3+ primitives (`Track.insert_device`,
 `RackDevice.insert_chain`, `Chain.insert_device("Simpler")`, `SimplerDevice.replace_sample`) and
