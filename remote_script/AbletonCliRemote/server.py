@@ -557,6 +557,14 @@ class AbletonCommandServer:
                         hint=late.hint,
                         details=late.details,
                     )
+            except CommandExecutionError as exc:
+                response = _error(
+                    request_id=parked.request_id,
+                    code=exc.code,
+                    message=exc.message,
+                    hint=exc.hint,
+                    details=exc.details,
+                )
             except Exception as exc:  # noqa: BLE001
                 response = _error(
                     request_id=parked.request_id,

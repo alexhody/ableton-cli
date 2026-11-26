@@ -539,3 +539,65 @@ def test_pending_result_that_is_already_ready_is_answered_in_the_same_poll() -> 
         sock.close()
     finally:
         server.stop()
+
+
+def test_pending_result_resolves_once_and_reports_its_outcome_to_callbacks() -> None:
+    reads: list[int] = []
+    outcomes: list[tuple[Any, Any]] = []
+    pending = PendingResult(
+        ready=lambda: False,
+        result=lambda: reads.append(1) or {"n": len(reads)},
+        timeout_s=1.0,
+    )
+    pending.add_done_callback(lambda result, error: outcomes.append((result, error)))
+
+    assert not pending.done
+    assert pending.resolve() == {"n": 1}
+    assert pending.resolve() == {"n": 1}
+    assert pending.done and pending.ready()
+    assert reads == [1]
+    assert outcomes == [({"n": 1}, None)]
+
+
+def test_pending_result_keeps_a_failure_and_raises_it_again() -> None:
+    outcomes: list[tuple[Any, Any]] = []
+
+    def _fail() -> dict[str, Any]:
+        raise RuntimeError("gone")
+
+    pending = PendingResult(ready=lambda: True, result=_fail, timeout_s=1.0)
+    pending.add_done_callback(lambda result, error: outcomes.append((result, error)))
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="gone"):
+            pending.resolve()
+    assert len(outcomes) == 1
+    assert outcomes[0][0] is None
+    assert isinstance(outcomes[0][1], RuntimeError)
+
+
+def test_a_parked_result_that_fails_with_a_command_error_keeps_its_code() -> None:
+    clock, calls = _Clock(), []
+
+    def _fail() -> dict[str, Any]:
+        raise CommandExecutionError(code="INVALID_ARGUMENT", message="bad", hint="fix it")
+
+    def _executor(name: str, args: dict[str, Any], meta: dict[str, Any]) -> Any:
+        calls.append(name)
+        return PendingResult(ready=lambda: False, result=_fail, timeout_s=1.0)
+
+    server = _server(_executor, clock=clock)
+    server.start()
+    try:
+        sock = _connect_and_send(server.server_address[1], _request_line("play", "transport_play"))
+        _settle()
+        server.poll()
+        clock.now += 1.5
+        server.poll()
+        error = _read_response(sock)["error"]
+        sock.close()
+    finally:
+        server.stop()
+
+    assert error["code"] == "INVALID_ARGUMENT"
+    assert error["message"] == "bad"

@@ -747,17 +747,32 @@ class LiveBackendContext:
         *,
         track_index: int | None = None,
         track_stable_ref: str | None = None,
+        main_track: bool = False,
     ) -> list[dict[str, Any]]:
+        """Serialize a track's top-level devices.
+
+        Pass ``track_index`` for a regular track, or ``main_track=True`` for the
+        main track. Either gives every ref a locator up front; without one,
+        ``_stable_ref`` searches the whole Set for each parameter.
+        """
         payload: list[dict[str, Any]] = []
         for device_index, device in enumerate(devices):
             parameters = [
                 {
                     "index": parameter_index,
-                    "stable_ref": self._parameter_stable_ref(
-                        parameter,
-                        track_index=track_index,
-                        device_index=device_index,
-                        parameter_index=parameter_index,
+                    "stable_ref": (
+                        self._stable_ref(
+                            "parameter",
+                            parameter,
+                            locator=("master", device_index, parameter_index),
+                        )
+                        if main_track
+                        else self._parameter_stable_ref(
+                            parameter,
+                            track_index=track_index,
+                            device_index=device_index,
+                            parameter_index=parameter_index,
+                        )
                     ),
                     "name": str(getattr(parameter, "name", f"Parameter {parameter_index}")),
                     "value": float(getattr(parameter, "value", 0.0)),
@@ -766,10 +781,14 @@ class LiveBackendContext:
             ]
             serialized = {
                 "index": device_index,
-                "stable_ref": self._device_stable_ref(
-                    device,
-                    track_index=track_index,
-                    device_index=device_index,
+                "stable_ref": (
+                    self._stable_ref("device", device, locator=("master", device_index))
+                    if main_track
+                    else self._device_stable_ref(
+                        device,
+                        track_index=track_index,
+                        device_index=device_index,
+                    )
                 ),
                 "name": str(getattr(device, "name", "")),
                 "class_name": str(getattr(device, "class_name", "")),
