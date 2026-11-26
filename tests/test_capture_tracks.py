@@ -18,8 +18,11 @@ class _FakeLive:
         *,
         tracks: list[tuple[str, bool]],
         main_devices_active: list[bool] | None = None,
+        solo_safe: str | None = None,
     ) -> None:
         self.calls: list[tuple[Any, ...]] = []
+        # Like a Solo Safe device: soloing any other track also solos this one.
+        self.solo_safe = solo_safe
         self.tracks = [{"index": i, "name": n, "solo": s} for i, (n, s) in enumerate(tracks)]
         self.main_devices_active = list(main_devices_active or [])
 
@@ -29,6 +32,10 @@ class _FakeLive:
     def track_solo_set(self, track_ref, value):  # noqa: ANN001, ANN201
         self.calls.append(("solo", track_ref["index"], value))
         self.tracks[track_ref["index"]]["solo"] = value
+        if value and self.tracks[track_ref["index"]]["name"] != self.solo_safe:
+            for track in self.tracks:
+                if track["name"] == self.solo_safe:
+                    track["solo"] = True
         return {"track": track_ref["index"], "solo": value}
 
     def create_audio_track(self, index=-1):  # noqa: ANN001, ANN201
@@ -102,8 +109,20 @@ def test_capture_tracks_solos_each_track_into_a_temporary_capture_track(monkeypa
         "bars": 8.0,
         "bypassed_main_devices": [],
         "captures": [
-            {"track_index": 0, "track_name": "Kick", "label": "Kick", "file_path": "/rec/Kick.wav"},
-            {"track_index": 2, "track_name": "Lead", "label": "Lead", "file_path": "/rec/Lead.wav"},
+            {
+                "track_index": 0,
+                "track_name": "Kick",
+                "label": "Kick",
+                "file_path": "/rec/Kick.wav",
+                "also_soloed": [],
+            },
+            {
+                "track_index": 2,
+                "track_name": "Lead",
+                "label": "Lead",
+                "file_path": "/rec/Lead.wav",
+                "also_soloed": [],
+            },
         ],
     }
     assert [track["name"] for track in live.tracks] == ["Kick", "Bass", "Lead"]
@@ -133,6 +152,32 @@ def test_capture_tracks_copy_to_copies_each_take_after_its_track_is_deleted(
     ]
     assert (out / "Lead.wav").read_bytes() == b"Lead"
     assert [track["name"] for track in live.tracks] == ["Kick", "Lead"]
+
+
+def test_capture_tracks_clears_auto_solos_and_reports_them(monkeypatch) -> None:
+    live = _FakeLive(tracks=[("ERM", False), ("Kick", False), ("Lead", False)], solo_safe="ERM")
+    _fake_capture(monkeypatch, live)
+
+    result = capture_tracks(live, tracks=[1, 2], bars=1.0, start=4.0)
+
+    # Without clearing ERM after the first capture, the second would refuse or include it twice.
+    assert [c["also_soloed"] for c in result["captures"]] == [["ERM"], ["ERM"]]
+    assert [track["solo"] for track in live.tracks] == [False, False, False]
+    assert ("solo", 0, False) in live.calls
+
+
+def test_capture_tracks_clears_auto_solos_when_capture_fails(monkeypatch) -> None:
+    live = _FakeLive(tracks=[("ERM", False), ("Kick", False)], solo_safe="ERM")
+
+    def failing(client, *, track, slot, bars, start, set_routing, wait_fn):  # noqa: ANN001, ANN202
+        raise AppError(error_code="INVALID_ARGUMENT", message="capture failed")
+
+    monkeypatch.setattr("ableton_cli.capture.capture_session", failing)
+
+    with pytest.raises(AppError):
+        capture_tracks(live, tracks=[1], bars=1.0, start=4.0)
+
+    assert [track["solo"] for track in live.tracks] == [False, False]
 
 
 def test_capture_tracks_bypasses_only_active_main_devices_and_restores_them(monkeypatch) -> None:

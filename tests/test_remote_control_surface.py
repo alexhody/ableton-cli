@@ -341,3 +341,26 @@ def test_response_cache_evicts_the_oldest_keys(monkeypatch: pytest.MonkeyPatch) 
     assert len(dispatched) == 5
     assert evicted_retry == {"tempo": 120.0}
     assert cached_retry == {"tempo": 120.0, "idempotent_replay": True}
+
+
+def test_a_pending_result_is_cached_for_replay_once_it_resolves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from remote_script.AbletonCliRemote.pending import PendingResult
+
+    surface = _make_surface(monkeypatch)
+    playing = {"value": False}
+    pending = PendingResult(
+        ready=lambda: playing["value"],
+        result=lambda: {"is_playing": playing["value"]},
+        timeout_s=1.0,
+    )
+    monkeypatch.setattr(control_surface_module, "dispatch_command", lambda *_args: pending)
+
+    first = _run_keyed(surface, "transport_play", "key-1")
+    assert first is pending
+    playing["value"] = True
+    pending.resolve()  # what the server does on a later tick
+
+    replay = _run_keyed(surface, "transport_play", "key-1")
+    assert replay == {"is_playing": True, "idempotent_replay": True}

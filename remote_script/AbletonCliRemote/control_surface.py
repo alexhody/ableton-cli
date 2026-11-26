@@ -10,6 +10,7 @@ from .command_backend import CommandError, RemoteErrorCode, dispatch_command
 from .events import EVENT_NAMES, EventBroker, Subscription, UnknownEventError
 from .live_backend import LiveBackend
 from .live_events import LiveEventSource
+from .pending import PendingResult
 from .remote_config import load_remote_config
 from .server import AbletonCommandServer, CommandExecutionError
 
@@ -181,6 +182,12 @@ class AbletonCliRemoteSurface(_ControlSurface):
             # instead of applying the command a second time.
             self._remember_response(key, _CachedResponse(error=error))
             raise _execution_error(error) from exc
+        if isinstance(result, PendingResult):
+            # Cached once the server resolves it, a tick or more later.
+            result.add_done_callback(
+                lambda resolved: self._remember_response(key, _CachedResponse(result=resolved))
+            )
+            return result
         self._remember_response(key, _CachedResponse(result=result))
         return result
 

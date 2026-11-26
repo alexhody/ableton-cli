@@ -86,12 +86,17 @@ class LiveBackendTracksClipsMixin:
 
     def _resolve_groove_target(self, target: str) -> tuple[Any, dict[str, str | None]]:
         parsed_target = str(target).strip()
-        if "/" in parsed_target:
+        # A URI can contain '/' (pack URIs read "query:LivePacks#www.ableton.com/0:..."),
+        # so it is a URI when its first ':' comes before its first '/'.
+        first_colon = parsed_target.find(":")
+        first_slash = parsed_target.find("/")
+        is_uri = first_colon >= 0 and (first_slash < 0 or first_colon < first_slash)
+        if not is_uri and first_slash >= 0:
             item = self._ctx.services.browser._resolve_browser_path(parsed_target)
             item_path = parsed_target
             uri_raw = getattr(item, "uri", None)
             item_uri = str(uri_raw).strip() if uri_raw is not None else None
-        elif ":" in parsed_target:
+        elif is_uri:
             item = self._ctx.services.browser._find_browser_item_by_uri(parsed_target)
             if item is None:
                 raise _invalid_argument(

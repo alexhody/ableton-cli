@@ -179,7 +179,8 @@ Mastering workflow is measurement-first:
 - To find which track owns a band, run `session capture-tracks` per section (it solos each
   track into a temporary capture track and restores solos, the temporary track, and any
   bypassed main devices even on failure), then pass each `captures[].label` and
-  `captures[].file_path` to `analysis spectrum shares --stem LABEL=PATH`.
+  `captures[].file_path` to `analysis spectrum shares --stem LABEL=PATH`. A non-empty
+  `captures[].also_soloed` names tracks Live soloed along with the target (heard in that capture).
 - `session capture` and `session capture-tracks` need `--start` (in beats) at least one bar
   in: playback starts first, the playhead moves one bar before `--start`, and launch
   quantization begins the recording at `--start`. The result reports `recorded_start_beat`;

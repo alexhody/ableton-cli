@@ -396,6 +396,20 @@ def test_clip_groove_set_reuses_a_groove_already_in_the_pool() -> None:
     assert surface.application().browser.loaded_items == []
 
 
+def test_clip_groove_set_accepts_a_pack_uri_containing_a_slash() -> None:
+    backend, surface = _strict_groove_backend()
+    pack_uri = (
+        "query:LivePacks#www.ableton.com/0:Grooves:Hip%20Hop%20Boom%20Bap%2016ths%2090%20bpm.agr"
+    )
+    surface.application().browser.user_library.children[0].children[0].uri = pack_uri
+
+    result = backend.clip_groove_set(0, 0, pack_uri)
+
+    assert result["groove_name"] == "Hip Hop Boom Bap 16ths 90 bpm"
+    assert result["groove_uri"] == pack_uri
+    assert result["groove_path"] == HIP_HOP_GROOVE_PATH
+
+
 def test_clip_groove_get_reads_the_live_groove() -> None:
     backend, _ = _strict_groove_backend()
     backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)

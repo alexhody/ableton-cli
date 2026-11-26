@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from ..command_backend import MAX_BPM, MAX_PANNING, MAX_VOLUME, MIN_BPM, MIN_PANNING, MIN_VOLUME
+from ..pending import PendingResult
 from .base import _invalid_argument, _not_supported_by_live_api
 from .routing import apply_routing, routing_state, string_choices
 
 _TRANSPORT_STATE_TIMEOUT_SECONDS = 1.0
-_TRANSPORT_STATE_POLL_INTERVAL_SECONDS = 0.01
 
 
 def _can_be_armed(track: Any) -> bool:
@@ -292,44 +291,44 @@ class LiveBackendTransportMixerMixin:
         available = string_choices(list(song.available_cue_routings))
         return song, available
 
-    def _wait_for_transport_state(self, *, expected: bool | None = None) -> bool:
-        deadline = time.monotonic() + _TRANSPORT_STATE_TIMEOUT_SECONDS
-        while True:
-            is_playing = bool(self._ctx._song().is_playing)
-            if expected is None or is_playing is expected:
-                return is_playing
-            if time.monotonic() >= deadline:
-                return is_playing
-            time.sleep(_TRANSPORT_STATE_POLL_INTERVAL_SECONDS)
+    def _transport_state_result(self, *, expected: bool) -> PendingResult:
+        """Answer once Live reports ``expected``.
 
-    def transport_play(self) -> dict[str, Any]:
+        Live applies a transport change only after this tick returns, so waiting
+        here would block Live and still read the old state. After the timeout
+        the answer is whatever Live then reports.
+        """
+        song = self._ctx._song()
+        return PendingResult(
+            ready=lambda: bool(song.is_playing) is expected,
+            result=lambda: {"is_playing": bool(song.is_playing)},
+            timeout_s=_TRANSPORT_STATE_TIMEOUT_SECONDS,
+        )
+
+    def transport_play(self) -> PendingResult:
         return self.start_playback()
 
-    def transport_stop(self) -> dict[str, Any]:
+    def transport_stop(self) -> PendingResult:
         return self.stop_playback()
 
-    def transport_toggle(self) -> dict[str, Any]:
+    def transport_toggle(self) -> PendingResult:
         song = self._ctx._song()
-        if self._wait_for_transport_state():
+        if bool(song.is_playing):
             song.stop_playing()
-            expected = False
-        else:
-            song.continue_playing()
-            expected = True
-        return {"is_playing": self._wait_for_transport_state(expected=expected)}
+            return self._transport_state_result(expected=False)
+        song.continue_playing()
+        return self._transport_state_result(expected=True)
 
-    def start_playback(self) -> dict[str, Any]:
+    def start_playback(self) -> PendingResult:
         # Live ignores a playhead moved while stopped (and a re-write in the same
         # tick); the CLI re-applies it once playback runs. continue_playing() at
         # least resumes from the last stop rather than the start marker.
-        song = self._ctx._song()
-        song.continue_playing()
-        return {"is_playing": self._wait_for_transport_state(expected=True)}
+        self._ctx._song().continue_playing()
+        return self._transport_state_result(expected=True)
 
-    def stop_playback(self) -> dict[str, Any]:
-        song = self._ctx._song()
-        song.stop_playing()
-        return {"is_playing": self._wait_for_transport_state(expected=False)}
+    def stop_playback(self) -> PendingResult:
+        self._ctx._song().stop_playing()
+        return self._transport_state_result(expected=False)
 
     def transport_tempo_get(self) -> dict[str, Any]:
         return {"tempo": float(self._ctx._song().tempo)}

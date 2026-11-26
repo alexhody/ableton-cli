@@ -46,7 +46,9 @@ wrote. The copy never overwrites an existing file. With
 `--bypass-main-devices` it turns off every active main-track device first, so the master
 chain does not color the measurement. Solos, the temporary track, and bypassed devices are
 restored even when a capture fails. It refuses to start while any track is soloed, because
-that track would leak into every capture. Captures run in real time: one bar of pre-roll
+that track would leak into every capture. Soloing a track can solo others too (for example a
+Max for Live device that keeps a track audible); those tracks are heard in the capture, so each
+capture lists them in `also_soloed`, and every solo is cleared afterwards. Captures run in real time: one bar of pre-roll
 plus `--bars` at the Set's tempo, per track.
 
 Both capture commands record from exactly `--start`. Live ignores a playhead moved while
