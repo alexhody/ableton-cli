@@ -337,8 +337,16 @@ def _capture_soloed(
     start: float,
     copy_dir: Path | None,
     wait_fn: Callable[[float], None] | None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
+    """Capture one track soloed, then leave no track soloed.
+
+    Soloing a track can solo others too (for example a Max for Live device that
+    keeps a track audible whenever anything is soloed). Those tracks are heard in
+    the capture, so they are reported in ``also_soloed``, and every solo is
+    cleared afterwards: the capture started with none (``check_solo``).
+    """
     track_ref = {"mode": "index", "index": track}
+    also_soloed: list[str] = []
     client.track_solo_set(track_ref, True)
     try:
         temporary = int(client.create_audio_track(-1)["index"])
@@ -356,9 +364,22 @@ def _capture_soloed(
             )
         finally:
             client.tracks_delete(temporary)
+        also_soloed = [
+            str(item["name"])
+            for item in _soloed_tracks(client)
+            if int(item["index"]) != track
+        ]
     finally:
         client.track_solo_set(track_ref, False)
+        for item in _soloed_tracks(client):
+            client.track_solo_set({"mode": "index", "index": int(item["index"])}, False)
     file_path = str(capture["file_path"])
-    if copy_dir is None:
-        return {"file_path": file_path}
-    return {"file_path": _copy_recording(file_path, copy_dir), "recorded_file_path": file_path}
+    result: dict[str, Any] = {"file_path": file_path, "also_soloed": also_soloed}
+    if copy_dir is not None:
+        result["file_path"] = _copy_recording(file_path, copy_dir)
+        result["recorded_file_path"] = file_path
+    return result
+
+
+def _soloed_tracks(client: Any) -> list[dict[str, Any]]:
+    return [item for item in client.tracks_list().get("tracks", []) if item.get("solo")]
