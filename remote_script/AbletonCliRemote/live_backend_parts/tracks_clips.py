@@ -524,7 +524,17 @@ class LiveBackendTracksClipsMixin:
                 message="Clip warp marker list API is not available in Live API",
                 hint="Use a Live version exposing clip.warp_markers.",
             )
-        return {"track": track, "clip": clip, "warp_markers": list(markers)}
+        return {
+            "track": track,
+            "clip": clip,
+            "warp_markers": [
+                {
+                    "beat_time": float(getattr(marker, "beat_time", 0.0)),
+                    "sample_time": float(getattr(marker, "sample_time", 0.0)),
+                }
+                for marker in markers
+            ],
+        }
 
     def clip_warp_marker_add(
         self,
@@ -540,9 +550,21 @@ class LiveBackendTracksClipsMixin:
                 message="Clip warp marker write API is not available in Live API",
                 hint="Use a Live version exposing clip.add_warp_marker.",
             )
-        marker = {"beat_time": float(beat_time)}
-        if sample_time is not None:
-            marker["sample_time"] = float(sample_time)
+        try:
+            import Live  # type: ignore
+        except ImportError:  # outside Live (tests): plain mapping payload
+            marker: Any = {"beat_time": float(beat_time)}
+            if sample_time is not None:
+                marker["sample_time"] = float(sample_time)
+        else:
+            # The Python LOM needs a Live.Clip.WarpMarker; a dict is rejected by the
+            # C++ converter. Without sample_time Live keeps the current timing.
+            if sample_time is None:
+                marker = Live.Clip.WarpMarker(beat_time=float(beat_time))
+            else:
+                marker = Live.Clip.WarpMarker(
+                    beat_time=float(beat_time), sample_time=float(sample_time)
+                )
         add_warp_marker(marker)
         return {
             "track": track,

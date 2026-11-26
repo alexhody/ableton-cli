@@ -77,16 +77,17 @@ class LiveBackendClipNotesMixin:
                 kwargs[optional] = note[optional]
         return factory(**kwargs)
 
-    def _clip_note_objects(self, clip_obj: Any) -> list[Any]:
+    def _clip_note_vector(self, clip_obj: Any) -> Any:
         time_span = max(float(getattr(clip_obj, "length", 0.0)), 0.0) + 1.0
-        return list(
-            clip_obj.get_notes_extended(
-                from_pitch=0,
-                pitch_span=128,
-                from_time=0.0,
-                time_span=time_span,
-            )
+        return clip_obj.get_notes_extended(
+            from_pitch=0,
+            pitch_span=128,
+            from_time=0.0,
+            time_span=time_span,
         )
+
+    def _clip_note_objects(self, clip_obj: Any) -> list[Any]:
+        return list(self._clip_note_vector(clip_obj))
 
     def _clip_notes_extended(self, clip_obj: Any) -> list[dict[str, Any]]:
         return [self._normalize_clip_note(note) for note in self._clip_note_objects(clip_obj)]
@@ -170,7 +171,14 @@ class LiveBackendClipNotesMixin:
                 message="Clip extended note modification API is not available in Live API",
                 hint="Use a Live version exposing clip.apply_note_modifications (Live 12+).",
             )
-        filtered_objects = self._filtered_clip_note_objects(clip_obj, start_time, end_time, pitch)
+        note_vector = self._clip_note_vector(clip_obj)
+        filtered_objects = [
+            note_obj
+            for note_obj in note_vector
+            if self._clip_note_matches_filter(
+                self._normalize_clip_note(note_obj), start_time, end_time, pitch
+            )
+        ]
         modified: list[Any] = []
 
         for index, note_obj in enumerate(filtered_objects):
@@ -186,7 +194,7 @@ class LiveBackendClipNotesMixin:
             modified.append(note_obj)
 
         if modified:
-            apply_note_modifications(tuple(modified))
+            apply_note_modifications(note_vector)
 
         return {
             "track": track,
@@ -241,7 +249,8 @@ class LiveBackendClipNotesMixin:
                 message="Clip extended note modification API is not available in Live API",
                 hint="Use a Live version exposing clip.apply_note_modifications (Live 12+).",
             )
-        by_id = {int(note_obj.note_id): note_obj for note_obj in self._clip_note_objects(clip_obj)}
+        note_vector = self._clip_note_vector(clip_obj)
+        by_id = {int(note_obj.note_id): note_obj for note_obj in note_vector}
         missing_note_ids: list[int] = []
         modified: list[Any] = []
         for update in notes:
@@ -261,7 +270,7 @@ class LiveBackendClipNotesMixin:
                 details={"missing_note_ids": sorted(missing_note_ids)},
             )
         if modified:
-            apply_note_modifications(tuple(modified))
+            apply_note_modifications(note_vector)
         return {"track": track, "clip": clip, "updated_count": len(modified)}
 
     def get_clip_notes(

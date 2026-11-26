@@ -36,9 +36,9 @@ _STANDARD_EFFECT_PARAMETER_NAMES: dict[str, dict[str, tuple[str, ...]]] = {
     "auto_filter": {
         "frequency": ("Frequency",),
         "resonance": ("Resonance", "Reson"),
-        "env_amount": ("Env Amount", "Envelope Amount"),
+        "env_amount": ("Env Amount", "Envelope Amount", "Env. Modulation"),
         "lfo_amount": ("LFO Amount",),
-        "lfo_rate": ("LFO Rate",),
+        "lfo_rate": ("LFO Rate", "LFO Freq", "LFO Frequency"),
     },
     "reverb": {
         "decay_time": ("Decay Time",),

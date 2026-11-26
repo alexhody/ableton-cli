@@ -17,7 +17,11 @@ GLOBAL_ID_TAG = re.compile(
 
 
 def global_id_elements(root: ET.Element) -> Iterator[ET.Element]:
-    return (element for element in root.iter() if GLOBAL_ID_TAG.match(element.tag))
+    return (
+        element
+        for element in root.iter()
+        if GLOBAL_ID_TAG.match(element.tag) and "Id" in element.attrib
+    )
 
 
 def pointee_references(root: ET.Element) -> Iterator[str]:

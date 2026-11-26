@@ -11,6 +11,15 @@ _TRANSPORT_STATE_TIMEOUT_SECONDS = 1.0
 _TRANSPORT_STATE_POLL_INTERVAL_SECONDS = 0.01
 
 
+def _can_be_armed(track: Any) -> bool:
+    # Live raises RuntimeError (not AttributeError) when reading ``arm`` on a
+    # group, return or main track, so ask ``can_be_armed`` first.
+    can_be_armed = getattr(track, "can_be_armed", None)
+    if can_be_armed is not None:
+        return bool(can_be_armed)
+    return hasattr(track, "arm")
+
+
 class LiveBackendSongSessionMixin:
     def song_info(self) -> dict[str, Any]:
         song = self._ctx._song()
@@ -38,7 +47,7 @@ class LiveBackendSongSessionMixin:
 
     def song_undo(self) -> dict[str, Any]:
         app = self._ctx._application()
-        undo = getattr(app, "undo", None)
+        undo = getattr(self._ctx._song(), "undo", None) or getattr(app, "undo", None)
         if not callable(undo):
             raise _not_supported_by_live_api(
                 message="Song undo API is not available in Live API",
@@ -49,7 +58,7 @@ class LiveBackendSongSessionMixin:
 
     def song_redo(self) -> dict[str, Any]:
         app = self._ctx._application()
-        redo = getattr(app, "redo", None)
+        redo = getattr(self._ctx._song(), "redo", None) or getattr(app, "redo", None)
         if not callable(redo):
             raise _not_supported_by_live_api(
                 message="Song redo API is not available in Live API",
@@ -140,7 +149,7 @@ class LiveBackendSongSessionMixin:
             "is_midi_track": bool(getattr(target, "has_midi_input", False)),
             "mute": bool(target.mute),
             "solo": bool(target.solo),
-            "arm": bool(getattr(target, "arm", False)),
+            "arm": bool(_can_be_armed(target) and target.arm),
             "volume": float(target.mixer_device.volume.value),
             "panning": float(target.mixer_device.panning.value),
             "clip_slots": clip_slots,
@@ -157,7 +166,7 @@ class LiveBackendSongSessionMixin:
                     "name": str(track.name),
                     "mute": bool(track.mute),
                     "solo": bool(track.solo),
-                    "arm": bool(getattr(track, "arm", False)),
+                    "arm": bool(_can_be_armed(track) and track.arm),
                     "volume": float(track.mixer_device.volume.value),
                 }
             )
@@ -396,7 +405,7 @@ class LiveBackendTransportMixerMixin:
 
     def track_arm_get(self, track: int) -> dict[str, Any]:
         target = self._ctx._track_at(track)
-        if not hasattr(target, "arm"):
+        if not _can_be_armed(target):
             raise _invalid_argument(
                 message="Track does not support arm",
                 hint="Use a MIDI or audio track with arm support.",
@@ -405,7 +414,7 @@ class LiveBackendTransportMixerMixin:
 
     def track_arm_set(self, track: int, value: bool) -> dict[str, Any]:
         target = self._ctx._track_at(track)
-        if not hasattr(target, "arm"):
+        if not _can_be_armed(target):
             raise _invalid_argument(
                 message="Track does not support arm",
                 hint="Use a MIDI or audio track with arm support.",
@@ -539,7 +548,11 @@ class LiveBackendTransportMixerMixin:
         """One reading of a track's output meters (Live's 0.0-1.0 meter scale)."""
         reading: dict[str, Any] = {}
         for channel in ("left", "right", "level"):
-            value = getattr(target, f"output_meter_{channel}", None)
+            try:
+                value = getattr(target, f"output_meter_{channel}", None)
+            except RuntimeError:
+                # Tracks with MIDI output only expose a single output_meter_level.
+                value = None if channel == "level" else getattr(target, "output_meter_level", None)
             if not isinstance(value, (int, float)):
                 raise _not_supported_by_live_api(
                     message=f"Track output_meter_{channel} is not available in Live API",

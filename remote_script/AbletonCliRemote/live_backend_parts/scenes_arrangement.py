@@ -345,6 +345,7 @@ class LiveBackendScenesArrangementMixin:
             target_tracks = [
                 (index, target_track)
                 for index, target_track in enumerate(list(self._ctx._song().tracks))
+                if not getattr(target_track, "is_foldable", False)
             ]
         else:
             target_tracks = [(track, self._ctx._track_at(track))]
