@@ -720,7 +720,9 @@ class LiveBackendScenesArrangementMixin:
         return self.arrangement_clip_warp_get(track, index)
 
     def arrangement_clip_gain_set(self, track: int, index: int, db: float) -> dict[str, Any]:
-        clip = self._arrangement_clip_at(track, index)
+        clip = self._ctx.services.tracks_clips._require_audio_clip(
+            self._arrangement_clip_at(track, index), action="updating clip gain"
+        )
         if not hasattr(clip, "gain"):
             raise _not_supported_by_live_api(
                 message="Arrangement clip gain API is not available in Live API",
@@ -736,7 +738,9 @@ class LiveBackendScenesArrangementMixin:
         index: int,
         semitones: int,
     ) -> dict[str, Any]:
-        clip = self._arrangement_clip_at(track, index)
+        clip = self._ctx.services.tracks_clips._require_audio_clip(
+            self._arrangement_clip_at(track, index), action="updating clip transpose"
+        )
         self._ctx.services.tracks_clips._set_required_clip_attr(
             clip, "pitch_coarse", int(semitones), api_name="transpose"
         )
