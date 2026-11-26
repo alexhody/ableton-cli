@@ -502,7 +502,7 @@ STABLE_ACTION_MAPPINGS: tuple[StableActionMapping, ...] = (
         action="find_effect_devices",
         command=(
             "uv run ableton-cli --output json effect find [--track <track>] [--type <eq"
-            "8|limiter|compressor|auto_filter|reverb|utility>]"
+            "8|limiter|compressor|auto-filter|reverb|utility>]"
         ),
         capability=(
             "Find supported effect devices (EQ Eight, Limiter, Compressor, Auto Filter,"

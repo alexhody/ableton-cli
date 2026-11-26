@@ -1212,6 +1212,36 @@ def test_effect_find_rejects_unknown_type(runner, cli_app) -> None:
     assert payload["error"]["code"] == "INVALID_ARGUMENT"
 
 
+@pytest.mark.parametrize("spelling", ["auto-filter", "auto_filter", "Auto-Filter"])
+def test_effect_find_accepts_command_group_spelling_of_type(
+    runner, cli_app, monkeypatch, spelling: str
+) -> None:
+    from ableton_cli.commands import _device_family
+
+    calls: list[dict[str, object]] = []
+
+    class _Client:
+        def find_effect_devices(self, **kwargs: object) -> dict[str, object]:
+            calls.append(kwargs)
+            return {"track": None, "effect_type": kwargs["effect_type"], "count": 0, "devices": []}
+
+    monkeypatch.setattr(_device_family, "get_client", lambda ctx: _Client())
+
+    result = runner.invoke(
+        cli_app,
+        ["--output", "json", "effect", "find", "--type", spelling],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert calls == [{"track": None, "effect_type": "auto_filter"}]
+
+
+def test_effect_find_type_help_lists_command_group_names(runner, cli_app) -> None:
+    result = runner.invoke(cli_app, ["effect", "find", "--help"], env={"COLUMNS": "200"})
+
+    assert "eq8|limiter|compressor|auto-filter|reverb|utility" in result.stdout
+
+
 def test_effect_standard_set_rejects_empty_key(runner, cli_app) -> None:
     result = runner.invoke(
         cli_app,

@@ -175,7 +175,7 @@ stepped parameters (Live reports Beat Repeat Grid or Glue Compressor Ratio as no
 but each integer raw value has its own label such as `1/32` or `4`). Set either kind by label
 with `device parameter select`; use `device parameter set-display` for continuous parameters.
 `set-display` takes a bare number in the parameter's display unit (`180` for 180 ms, `2000` for
-2.00 s); unit text such as `180 ms` is rejected, and negative values go after `--`.
+2.00 s); unit text such as `180 ms` is rejected. Negative values such as `-10` can be passed directly.
 A display value Live rejects fails with `INVALID_ARGUMENT`.
 Glue Compressor is not a `compressor` wrapper target: it has no Makeup parameter and uses raw dB
 and stepped values. `effect find` skips it; edit it with `device parameter set-display` / `select`.
