@@ -33443,6 +33443,9 @@
         "\u2502                                  [required]                                                      \u2502",
         "\u2502    --set-routing                 Set the track's input routing to Resampling automatically       \u2502",
         "\u2502    --qa-project         TEXT     Run remix mastering QA against this project file                \u2502",
+        "\u2502    --copy-to            TEXT     Copy each recording into this folder (created if missing) and   \u2502",
+        "\u2502                                  report the copy; Live deletes an unsaved Set's recordings when  \u2502",
+        "\u2502                                  it closes                                                       \u2502",
         "\u2502    --help                        Show this message and exit.                                     \u2502",
         "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
       ],
@@ -33605,6 +33608,32 @@
             "class": "StringParamType",
             "name": "text"
           }
+        },
+        {
+          "count": false,
+          "default": null,
+          "envvar": null,
+          "expose_value": true,
+          "flag_value": null,
+          "help": "Copy each recording into this folder (created if missing) and report the copy; Live deletes an unsaved Set's recordings when it closes",
+          "hidden": false,
+          "is_flag": false,
+          "kind": "option",
+          "metavar": null,
+          "multiple": false,
+          "name": "copy_to",
+          "nargs": 1,
+          "opts": [
+            "--copy-to"
+          ],
+          "prompt": null,
+          "required": false,
+          "secondary_opts": [],
+          "show_default": true,
+          "type": {
+            "class": "StringParamType",
+            "name": "text"
+          }
         }
       ],
       "path": [
@@ -33628,6 +33657,9 @@
         "\u2502    --bars                       FLOAT    Number of bars to capture [default: 8.0]                \u2502",
         "\u2502    --bypass-main-devices                 Turn off active main-track devices while capturing,     \u2502",
         "\u2502                                          then restore them                                       \u2502",
+        "\u2502    --copy-to                    TEXT     Copy each recording into this folder (created if        \u2502",
+        "\u2502                                          missing) and report the copy; Live deletes an unsaved   \u2502",
+        "\u2502                                          Set's recordings when it closes                         \u2502",
         "\u2502    --help                                Show this message and exit.                             \u2502",
         "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f"
       ],
@@ -33737,6 +33769,32 @@
           "type": {
             "class": "BoolParamType",
             "name": "boolean"
+          }
+        },
+        {
+          "count": false,
+          "default": null,
+          "envvar": null,
+          "expose_value": true,
+          "flag_value": null,
+          "help": "Copy each recording into this folder (created if missing) and report the copy; Live deletes an unsaved Set's recordings when it closes",
+          "hidden": false,
+          "is_flag": false,
+          "kind": "option",
+          "metavar": null,
+          "multiple": false,
+          "name": "copy_to",
+          "nargs": 1,
+          "opts": [
+            "--copy-to"
+          ],
+          "prompt": null,
+          "required": false,
+          "secondary_opts": [],
+          "show_default": true,
+          "type": {
+            "class": "StringParamType",
+            "name": "text"
           }
         }
       ],

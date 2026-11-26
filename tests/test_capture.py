@@ -303,3 +303,98 @@ def test_capture_session_qa_project_invokes_mastering_qa(monkeypatch) -> None:
 
     assert qa_calls == [("./proj/x.json", "/tmp/capture/Track 1.wav")]
     assert result["qa"] == {"ok": True}
+
+
+def test_capture_session_copy_to_copies_the_take_and_reports_both_paths(tmp_path) -> None:
+    take = tmp_path / "Live Recordings" / "Audio 0001.wav"
+    take.parent.mkdir()
+    take.write_bytes(b"RIFF take")
+    copy_dir = tmp_path / "captures" / "nested"
+    client, recorded_seconds = _client_recording_from(4.0, file_path=str(take))
+
+    result = capture_session(
+        client,
+        track=0,
+        slot=0,
+        bars=1,
+        start=4.0,
+        copy_to=str(copy_dir),
+        wait_fn=lambda _seconds: None,
+        recorded_seconds_fn=recorded_seconds,
+    )
+
+    assert result["file_path"] == str(copy_dir / "Audio 0001.wav")
+    assert result["recorded_file_path"] == str(take)
+    assert (copy_dir / "Audio 0001.wav").read_bytes() == b"RIFF take"
+
+
+def test_capture_session_copy_to_never_overwrites_an_existing_file(tmp_path) -> None:
+    take = tmp_path / "Audio 0001.wav"
+    take.write_bytes(b"RIFF take")
+    copy_dir = tmp_path / "captures"
+    copy_dir.mkdir()
+    (copy_dir / "Audio 0001.wav").write_bytes(b"older take")
+    client, recorded_seconds = _client_recording_from(4.0, file_path=str(take))
+
+    with pytest.raises(AppError) as excinfo:
+        capture_session(
+            client,
+            track=0,
+            slot=0,
+            bars=1,
+            start=4.0,
+            copy_to=str(copy_dir),
+            wait_fn=lambda _seconds: None,
+            recorded_seconds_fn=recorded_seconds,
+        )
+
+    assert excinfo.value.details["step"] == "copy_recording"
+    assert (copy_dir / "Audio 0001.wav").read_bytes() == b"older take"
+
+
+def test_capture_session_copy_to_fails_before_recording_when_folder_is_a_file(tmp_path) -> None:
+    not_a_dir = tmp_path / "file.txt"
+    not_a_dir.write_text("x")
+    client = _FakeCaptureClient()
+
+    with pytest.raises(AppError) as excinfo:
+        capture_session(
+            client,
+            track=0,
+            slot=0,
+            bars=1,
+            start=4.0,
+            copy_to=str(not_a_dir),
+            wait_fn=lambda _seconds: None,
+        )
+
+    assert excinfo.value.details["step"] == "prepare_copy_dir"
+    assert "track_arm_set" not in [call[0] for call in client.calls]
+
+
+def test_capture_session_qa_runs_on_the_copy(monkeypatch, tmp_path) -> None:
+    import ableton_cli.capture as capture_module
+
+    qa_calls: list[str] = []
+    monkeypatch.setattr(
+        capture_module,
+        "run_mastering_qa",
+        lambda _project, *, render: qa_calls.append(render) or {"ok": True},
+    )
+    take = tmp_path / "Audio 0001.wav"
+    take.write_bytes(b"RIFF take")
+    client, recorded_seconds = _client_recording_from(4.0, file_path=str(take))
+
+    capture_session(
+        client,
+        track=0,
+        slot=0,
+        bars=1,
+        start=4.0,
+        qa_project="./proj/x.json",
+        copy_to=str(tmp_path / "out"),
+        wait_fn=lambda _seconds: None,
+        recorded_seconds_fn=recorded_seconds,
+    )
+
+    assert qa_calls == [str(tmp_path / "out" / "Audio 0001.wav")]

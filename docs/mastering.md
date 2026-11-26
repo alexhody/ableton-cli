@@ -38,7 +38,11 @@ uv run ableton-cli --output json analysis spectrum shares --stem Kick=<captures[
 
 `session capture-tracks` solos each listed track in turn and records the main output into a
 temporary audio track (input Resampling, volume 0), which it deletes afterwards. The recorded
-files stay in the Set's `Samples/Recorded` folder and are listed in `captures`. With
+files stay in the Set's `Samples/Recorded` folder and are listed in `captures`. For a Set that
+was never saved, that folder is in Live's temporary project under `Live Recordings`, and Live
+deletes it when it closes without saving. Pass `--copy-to DIR` (both capture commands) to copy
+each take into `DIR`: `file_path` then names the copy and `recorded_file_path` the take Live
+wrote. The copy never overwrites an existing file. With
 `--bypass-main-devices` it turns off every active main-track device first, so the master
 chain does not color the measurement. Solos, the temporary track, and bypassed devices are
 restored even when a capture fails. It refuses to start while any track is soloed, because
