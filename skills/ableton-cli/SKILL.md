@@ -62,6 +62,7 @@ uv run ableton-cli session events --events tempo,is_playing --count 5
 uv run ableton-cli session events --idle-timeout-ms 5000
 uv run ableton-cli session capture --track-index 0 --slot 0 --bars 8 --start 32 --set-routing
 uv run ableton-cli session capture-tracks --track-index 0 --track-index 3 --start 304 --bars 8 --bypass-main-devices
+uv run ableton-cli session capture-tracks --track-index 0 --start 304 --bars 8 --copy-to ./captures
 uv run ableton-cli session stop-all-clips
 ```
 
@@ -184,6 +185,10 @@ Mastering workflow is measurement-first:
   quantization begins the recording at `--start`. The result reports `recorded_start_beat`;
   a recording that began elsewhere (launch quantization other than 1 Bar) fails with
   `step: verify_recorded_start`.
+- Live records into the Set's `Samples/Recorded` folder. For a Set that was never saved,
+  that folder is in Live's temporary project, and Live deletes it when it closes without
+  saving. Pass `--copy-to DIR` to keep the takes: `file_path` then names the copy and
+  `recorded_file_path` the take Live wrote.
 - Run `remix mastering apply --dry-run` before `--yes`.
 - Pick device/preset targets from `browser search`; do not assume fixed URI availability.
 - If a standard effect wrapper fails on locale/device-variant parameter names, switch to generic parameter list/set commands.

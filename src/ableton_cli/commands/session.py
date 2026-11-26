@@ -171,6 +171,16 @@ def session_capture(
         str | None,
         typer.Option("--qa-project", help="Run remix mastering QA against this project file"),
     ] = None,
+    copy_to: Annotated[
+        str | None,
+        typer.Option(
+            "--copy-to",
+            help=(
+                "Copy each recording into this folder (created if missing) and report the copy; "
+                "Live deletes an unsaved Set's recordings when it closes"
+            ),
+        ),
+    ] = None,
 ) -> None:
     def _run() -> dict[str, object]:
         valid_track = require_track_index(track_index)
@@ -187,6 +197,7 @@ def session_capture(
             start=valid_start,
             set_routing=set_routing,
             qa_project=qa_project,
+            copy_to=copy_to,
         )
 
     execute_command(
@@ -199,6 +210,7 @@ def session_capture(
             "start": start,
             "set_routing": set_routing,
             "qa_project": qa_project,
+            "copy_to": copy_to,
         },
         action=_run,
     )
@@ -226,6 +238,16 @@ def session_capture_tracks(
             help="Turn off active main-track devices while capturing, then restore them",
         ),
     ] = False,
+    copy_to: Annotated[
+        str | None,
+        typer.Option(
+            "--copy-to",
+            help=(
+                "Copy each recording into this folder (created if missing) and report the copy; "
+                "Live deletes an unsaved Set's recordings when it closes"
+            ),
+        ),
+    ] = None,
 ) -> None:
     tracks = track_indexes or []
 
@@ -241,6 +263,7 @@ def session_capture_tracks(
                 "start", start, hint="Use a non-negative --start value in beats."
             ),
             bypass_main_devices=bypass_main_devices,
+            copy_to=copy_to,
         )
 
     execute_command(
@@ -251,6 +274,7 @@ def session_capture_tracks(
             "bars": bars,
             "start": start,
             "bypass_main_devices": bypass_main_devices,
+            "copy_to": copy_to,
         },
         action=_run,
     )

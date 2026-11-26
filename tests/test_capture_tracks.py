@@ -109,6 +109,32 @@ def test_capture_tracks_solos_each_track_into_a_temporary_capture_track(monkeypa
     assert [track["name"] for track in live.tracks] == ["Kick", "Bass", "Lead"]
 
 
+def test_capture_tracks_copy_to_copies_each_take_after_its_track_is_deleted(
+    monkeypatch, tmp_path
+) -> None:
+    live = _FakeLive(tracks=[("Kick", False), ("Lead", False)])
+    takes = tmp_path / "rec"
+    takes.mkdir()
+
+    def capture(client, *, track, slot, bars, start, set_routing, wait_fn):  # noqa: ANN001, ANN202
+        name = [t["name"] for t in live.tracks if t["solo"]][0]
+        take = takes / f"{name}.wav"
+        take.write_bytes(name.encode())
+        return {"file_path": str(take)}
+
+    monkeypatch.setattr("ableton_cli.capture.capture_session", capture)
+    out = tmp_path / "out"
+
+    result = capture_tracks(live, tracks=[0, 1], bars=1.0, start=4.0, copy_to=str(out))
+
+    assert [(c["file_path"], c["recorded_file_path"]) for c in result["captures"]] == [
+        (str(out / "Kick.wav"), str(takes / "Kick.wav")),
+        (str(out / "Lead.wav"), str(takes / "Lead.wav")),
+    ]
+    assert (out / "Lead.wav").read_bytes() == b"Lead"
+    assert [track["name"] for track in live.tracks] == ["Kick", "Lead"]
+
+
 def test_capture_tracks_bypasses_only_active_main_devices_and_restores_them(monkeypatch) -> None:
     live = _FakeLive(tracks=[("Kick", False)], main_devices_active=[True, False, True])
     _fake_capture(monkeypatch, live)

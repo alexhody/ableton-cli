@@ -151,7 +151,9 @@ shares` and `analysis reference compare`. Write their reports with `--report-out
 register them with `remix mastering report add --kind loudness|spectrum|reference_compare`
 so `remix mastering qa` can read them; `report add` fails with `INVALID_ARGUMENT` when a
 report lacks a field QA reads. `session capture` and `session capture-tracks` return the
-captured `file_path`s for the plugin to measure.
+captured `file_path`s for the plugin to measure. An unsaved Set's takes live in Live's
+temporary project and are deleted when Live closes without saving; pass `--copy-to DIR` to keep
+them.
 
 `arrangement clip create --audio-path` sizes the new clip to `--length` by moving its loop end:
 Live first sizes an audio clip to the file's warped length, and a clip's `length` is read-only.

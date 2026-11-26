@@ -133,3 +133,45 @@ def test_session_capture_rejects_non_positive_bars(runner, cli_app, monkeypatch)
     payload = json.loads(result.stdout)
     assert payload["ok"] is False
     assert payload["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_session_capture_copy_to_reports_the_copy(runner, cli_app, monkeypatch, tmp_path) -> None:
+    from ableton_cli.commands import session
+
+    take = tmp_path / "Track 1.wav"
+    take.write_bytes(b"RIFF")
+
+    class _Client(_FakeCaptureClient):
+        def clip_file_path_get(self, track, clip):  # noqa: ANN001, ANN201
+            return {"track": track, "clip": clip, "file_path": str(take)}
+
+    monkeypatch.setattr(session, "get_client", lambda ctx: _Client())
+    monkeypatch.setattr("ableton_cli.capture.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("ableton_cli.capture.wav_duration_sec", lambda _path: 4.0)
+    out = tmp_path / "out"
+
+    result = runner.invoke(
+        cli_app,
+        [
+            "--output",
+            "json",
+            "session",
+            "capture",
+            "--track-index",
+            "0",
+            "--slot",
+            "0",
+            "--bars",
+            "4",
+            "--start",
+            "8",
+            "--copy-to",
+            str(out),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["args"]["copy_to"] == str(out)
+    assert payload["result"]["file_path"] == str(out / "Track 1.wav")
+    assert payload["result"]["recorded_file_path"] == str(take)

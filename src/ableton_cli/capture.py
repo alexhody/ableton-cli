@@ -16,9 +16,11 @@ step name in the error details (no fallback paths, no partial retries).
 
 from __future__ import annotations
 
+import shutil
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from .audio_analysis.io import wav_duration_sec
@@ -49,6 +51,7 @@ def capture_session(
     start: float,
     set_routing: bool = False,
     qa_project: str | None = None,
+    copy_to: str | None = None,
     wait_fn: Callable[[float], None] | None = None,
     recorded_seconds_fn: Callable[[str], float] | None = None,
 ) -> dict[str, Any]:
@@ -117,6 +120,8 @@ def capture_session(
             step="validate_start",
         )
 
+    copy_dir = _prepare_copy_dir(copy_to)
+
     # Live ignores a playhead moved while stopped, and firing a clip from a stopped
     # transport restarts the song at 0. So start playback, then move the playhead one
     # bar before start and fire: launch quantization begins the recording at start.
@@ -162,11 +167,53 @@ def capture_session(
         "recorded_start_beat": recorded_start,
         "file_path": file_path,
     }
+    if copy_dir is not None:
+        result["file_path"] = _copy_recording(file_path, copy_dir)
+        result["recorded_file_path"] = file_path
 
     if qa_project is not None:
-        result["qa"] = run_mastering_qa(qa_project, render=file_path)
+        result["qa"] = run_mastering_qa(qa_project, render=result["file_path"])
 
     return result
+
+
+def _prepare_copy_dir(copy_to: str | None) -> Path | None:
+    """Create the ``copy_to`` folder before recording, so a bad path fails in no time."""
+    if copy_to is None:
+        return None
+    copy_dir = Path(copy_to).expanduser().resolve()
+    try:
+        copy_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise _invalid_argument(
+            message=f"cannot create --copy-to folder {str(copy_dir)!r}: {exc.strerror or exc}",
+            hint="Pass --copy-to a folder path you can write to.",
+            step="prepare_copy_dir",
+            copy_to=str(copy_dir),
+        ) from exc
+    return copy_dir
+
+
+def _copy_recording(file_path: str, copy_dir: Path) -> str:
+    target = copy_dir / Path(file_path).name
+    if target.exists():
+        raise _invalid_argument(
+            message=f"{str(target)!r} already exists",
+            hint="Pass an empty --copy-to folder, or move the existing file away.",
+            step="copy_recording",
+            file_path=str(target),
+            recorded_file_path=file_path,
+        )
+    try:
+        shutil.copyfile(file_path, target)
+    except OSError as exc:
+        raise _invalid_argument(
+            message=f"cannot copy {file_path!r} to {str(target)!r}: {exc.strerror or exc}",
+            hint="Check that --copy-to is writable and has free space.",
+            step="copy_recording",
+            recorded_file_path=file_path,
+        ) from exc
+    return str(target)
 
 
 _MAIN_TRACK = {"mode": "main"}
@@ -179,10 +226,12 @@ def capture_tracks(
     bars: float,
     start: float,
     bypass_main_devices: bool = False,
+    copy_to: str | None = None,
     wait_fn: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
     names = _validate_capture_tracks(client, tracks)
     labels = _track_labels(tracks, names)
+    copy_dir = _prepare_copy_dir(copy_to)
 
     with _main_devices_bypassed(client, enabled=bypass_main_devices) as bypassed:
         captures = [
@@ -190,8 +239,13 @@ def capture_tracks(
                 "track_index": track,
                 "track_name": names[track],
                 "label": labels[track],
-                "file_path": _capture_soloed(
-                    client, track=track, bars=bars, start=start, wait_fn=wait_fn
+                **_capture_soloed(
+                    client,
+                    track=track,
+                    bars=bars,
+                    start=start,
+                    copy_dir=copy_dir,
+                    wait_fn=wait_fn,
                 ),
             }
             for track in tracks
@@ -281,8 +335,9 @@ def _capture_soloed(
     track: int,
     bars: float,
     start: float,
+    copy_dir: Path | None,
     wait_fn: Callable[[float], None] | None,
-) -> str:
+) -> dict[str, str]:
     track_ref = {"mode": "index", "index": track}
     client.track_solo_set(track_ref, True)
     try:
@@ -303,4 +358,7 @@ def _capture_soloed(
             client.tracks_delete(temporary)
     finally:
         client.track_solo_set(track_ref, False)
-    return str(capture["file_path"])
+    file_path = str(capture["file_path"])
+    if copy_dir is None:
+        return {"file_path": file_path}
+    return {"file_path": _copy_recording(file_path, copy_dir), "recorded_file_path": file_path}
