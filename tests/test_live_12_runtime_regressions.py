@@ -340,7 +340,7 @@ def test_audio_clip_gain_and_transpose_still_apply() -> None:
 
 
 class _StrictGrooveClip(_Clip):
-    """Live's Clip.groove takes a Groove Pool entry or None; the C++ binding rejects strings."""
+    """Live's Clip.groove setter takes only a Groove Pool entry: strings and None are rejected."""
 
     @property
     def groove(self) -> Any:
@@ -348,7 +348,8 @@ class _StrictGrooveClip(_Clip):
 
     @groove.setter
     def groove(self, value: Any) -> None:
-        if value is not None and not isinstance(value, _Groove):
+        initializing = "_groove" not in self.__dict__  # _Clip.__init__ starts with None
+        if not isinstance(value, _Groove) and not (initializing and value is None):
             raise TypeError(
                 "Python argument types in None.None(Clip, "
                 f"{type(value).__name__}) did not match C++ signature"
@@ -390,17 +391,34 @@ def test_clip_groove_set_reuses_a_groove_already_in_the_pool() -> None:
     assert surface.application().browser.loaded_items == []
 
 
-def test_clip_groove_get_and_clear_read_the_live_groove() -> None:
-    backend, surface = _strict_groove_backend()
+def test_clip_groove_get_reads_the_live_groove() -> None:
+    backend, _ = _strict_groove_backend()
     backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)
 
     current = backend.clip_groove_get(0, 0)
-    cleared = backend.clip_groove_clear(0, 0)
 
+    assert current["has_groove"] is True
     assert current["groove_name"] == "Hip Hop Boom Bap 16ths 90 bpm"
     assert current["groove_path"] is None
+
+
+def test_clip_groove_clear_is_not_supported_when_a_groove_is_assigned() -> None:
+    backend, surface = _strict_groove_backend()
+    backend.clip_groove_set(0, 0, HIP_HOP_GROOVE_PATH)
+
+    with pytest.raises(CommandError) as exc_info:
+        backend.clip_groove_clear(0, 0)
+
+    assert exc_info.value.details == {"reason": "not_supported_by_live_api"}
+    assert surface.song().tracks[0].clip_slots[0].clip.groove is not None
+
+
+def test_clip_groove_clear_without_a_groove_is_a_no_op() -> None:
+    backend, _ = _strict_groove_backend()
+
+    cleared = backend.clip_groove_clear(0, 0)
+
     assert cleared["has_groove"] is False
-    assert surface.song().tracks[0].clip_slots[0].clip.groove is None
 
 
 def test_clip_groove_set_fails_when_live_does_not_add_the_groove(monkeypatch) -> None:

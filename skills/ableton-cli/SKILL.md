@@ -382,7 +382,8 @@ and `packs/Core Library/Grooves/...`, so find one with `browser search .agr --pa
 `clip groove set` reuses a groove already in Live's Groove Pool with the same name, and otherwise
 loads the `.agr` into the pool first. `clip groove get` reports only `groove_name` (the pool
 entry); the browser `groove_uri`/`groove_path` are returned by `set` only. Live has no per-clip
-groove amount, so `clip groove amount set` fails with `not_supported_by_live_api`.
+groove amount and no way to remove a clip's groove, so `clip groove amount set` and
+`clip groove clear` on a clip that has a groove fail with `not_supported_by_live_api`.
 
 ### Scenes
 

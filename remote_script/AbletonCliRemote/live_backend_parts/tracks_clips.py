@@ -230,7 +230,16 @@ class LiveBackendTracksClipsMixin:
 
     def clip_groove_clear(self, track: int, clip: int) -> dict[str, Any]:
         clip_obj, groove_attr = self._require_clip_with_groove_support(track=track, clip=clip)
-        setattr(clip_obj, groove_attr, None)
+        if getattr(clip_obj, groove_attr, None) is not None:
+            try:
+                setattr(clip_obj, groove_attr, None)
+            except TypeError as exc:
+                # Live 12's Clip.groove setter accepts only a Groove (Boost raises
+                # ArgumentError, a TypeError, for None) and the API has no remove call.
+                raise _not_supported_by_live_api(
+                    message="Live API cannot remove a clip's groove",
+                    hint="Set the clip's Groove chooser to None in Live's Clip View.",
+                ) from exc
         return self._clip_groove_payload(
             track=track,
             clip=clip,
