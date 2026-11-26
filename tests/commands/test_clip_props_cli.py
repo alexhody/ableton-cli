@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 
 class _ClipPropsClient:
     def __init__(self) -> None:
@@ -242,6 +244,43 @@ def test_clip_warp_conform_selects_profile_mode_and_verifies(runner, cli_app, mo
     assert payload["markers"]["count"] == 2
     assert payload["markers"]["beat_times"] == [0.0, 64.0]
     assert payload["warnings"] == ["moderate_stretch_risk"]
+
+
+class _ShortAudioClipClient(_ClipPropsClient):
+    """Live 12.4: a 5.69 s recording at 116 BPM sits in a clip rounded up to 12 beats."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        spb = 60 / 116
+        self.warp_markers = [
+            {"beat_time": 0.0, "sample_time": 0.0},
+            {"beat_time": 0.03125, "sample_time": 0.03125 * spb},
+        ]
+
+    def clip_props_get(self, track: int, clip: int):  # noqa: ANN201
+        return {"track": track, "clip": clip, "loop_start": 0.0, "loop_end": 12.0, "length": 12.0}
+
+    def clip_warp_get(self, track: int, clip: int):  # noqa: ANN201
+        return {**super().clip_warp_get(track, clip), "sample_duration": 5.686}
+
+
+def test_clip_warp_conform_clamps_end_marker_to_audio_end(runner, cli_app, monkeypatch) -> None:
+    from ableton_cli.commands import clip
+
+    monkeypatch.setattr(clip, "get_client", lambda ctx: _ShortAudioClipClient())
+
+    result = runner.invoke(
+        cli_app,
+        ["--output", "json", "clip", "warp", "conform", "0", "1"]
+        + ["--source-bpm", "116", "--target-bpm", "120", "--profile", "full-mix"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)["result"]
+    end_beat = payload["markers"]["beat_times"][1]
+    assert end_beat < 12.0
+    assert end_beat == pytest.approx(5.686 * 116 / 60, abs=1e-4)
+    assert "second_marker_clamped_to_audio_end" in payload["warnings"]
 
 
 def test_clip_warp_conform_requires_force_for_extreme_stretch(

@@ -7,6 +7,17 @@ from ..command_backend import CommandError
 from .base import _invalid_argument, _not_supported_by_live_api
 
 
+def _sample_duration_seconds(clip_obj: Any) -> float | None:
+    """Length of the clip's audio file in seconds (warp-marker sample_time units)."""
+    sample_length = getattr(clip_obj, "sample_length", None)
+    sample_rate = getattr(clip_obj, "sample_rate", None)
+    if not isinstance(sample_length, (int, float)) or not isinstance(sample_rate, (int, float)):
+        return None
+    if sample_rate <= 0:
+        return None
+    return float(sample_length) / float(sample_rate)
+
+
 def _sample_time_at_beat(markers: Any, beat_time: float) -> float | None:
     """Sample time at ``beat_time`` on the clip's current warp curve.
 
@@ -514,6 +525,7 @@ class LiveBackendTracksClipsMixin:
             "warping": bool(getattr(clip_obj, "warping", False)),
             "warp_mode": getattr(clip_obj, "warp_mode", None),
             "available_warp_modes": list(getattr(clip_obj, "available_warp_modes", [])),
+            "sample_duration": _sample_duration_seconds(clip_obj),
         }
 
     def clip_warp_set(

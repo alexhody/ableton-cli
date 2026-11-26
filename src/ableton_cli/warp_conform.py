@@ -118,6 +118,27 @@ def _verify_warp_readback(readback: dict[str, Any], selected_mode: str) -> None:
         )
 
 
+def _audio_end_beat(client: Any, track: int, clip: int, sample_duration: Any) -> float | None:
+    """Beat at the end of the clip's audio on its current warp curve, if known."""
+    if not isinstance(sample_duration, int | float) or sample_duration <= 0:
+        return None
+    markers = client.clip_warp_marker_list(track, clip).get("warp_markers", [])
+    points = sorted(
+        (float(marker["beat_time"]), float(marker["sample_time"])) for marker in markers
+    )
+    if len(points) < 2:
+        return None
+    segments = list(zip(points, points[1:], strict=False))
+    (beat0, sample0), (beat1, sample1) = next(
+        (segment for segment in segments if sample_duration <= segment[1][1]), segments[-1]
+    )
+    if sample1 == sample0:
+        return None
+    # Stay a hair inside the file so the end marker's sample time is in range.
+    end_beat = beat0 + (float(sample_duration) - sample0) * (beat1 - beat0) / (sample1 - sample0)
+    return round(end_beat, 6) - 1e-6
+
+
 def conform_session_clip_warp(
     client: Any,
     *,
@@ -157,6 +178,12 @@ def conform_session_clip_warp(
         props = client.clip_props_get(track, clip)
         clip_length = float(props.get("length", 0.0))
         planned_marker_beats = [0.0]
+        audio_end_beat = _audio_end_beat(client, track, clip, initial.get("sample_duration"))
+        if audio_end_beat is not None and 0 < audio_end_beat < clip_length:
+            # Live rounds clip length up to whole bars; a marker past the end of the
+            # audio file is rejected ("Warp marker sample time is out of range").
+            clip_length = audio_end_beat
+            warnings.append("second_marker_clamped_to_audio_end")
         if clip_length > 0:
             planned_marker_beats.append(clip_length)
         else:

@@ -250,3 +250,14 @@ def test_warp_marker_add_builds_live_warp_marker_on_current_timing(
     assert added[0].beat_time == 4.0
     assert added[0].sample_time == pytest.approx(4.0 * 60 / 116)
     assert (added[1].beat_time, added[1].sample_time) == (8.0, 3.5)
+
+
+def test_clip_warp_get_reports_sample_duration_in_seconds() -> None:
+    surface = _SurfaceStub()
+    slot = surface.song().tracks[1].clip_slots[0]
+    slot.clip = _Clip(length=12.0, is_audio_clip=True, is_midi_clip=False, file_path="/tmp/a.wav")
+    slot.clip.sample_length = 250_774
+    slot.clip.sample_rate = 44_100.0
+    backend = LiveBackend(surface)
+
+    assert backend.clip_warp_get(1, 0)["sample_duration"] == pytest.approx(5.6865, abs=1e-4)
