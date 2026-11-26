@@ -7,6 +7,35 @@ from ..command_backend import CommandError
 from .base import _invalid_argument, _not_supported_by_live_api
 
 
+def _sample_duration_seconds(clip_obj: Any) -> float | None:
+    """Length of the clip's audio file in seconds (warp-marker sample_time units)."""
+    sample_length = getattr(clip_obj, "sample_length", None)
+    sample_rate = getattr(clip_obj, "sample_rate", None)
+    if not isinstance(sample_length, (int, float)) or not isinstance(sample_rate, (int, float)):
+        return None
+    if sample_rate <= 0:
+        return None
+    return float(sample_length) / float(sample_rate)
+
+
+def _sample_time_at_beat(markers: Any, beat_time: float) -> float | None:
+    """Sample time at ``beat_time`` on the clip's current warp curve.
+
+    Interpolates between the surrounding markers, or extrapolates the first/last
+    segment, so a marker added there does not change playback timing.
+    """
+    points = sorted((float(marker.beat_time), float(marker.sample_time)) for marker in markers)
+    if len(points) < 2:
+        return None
+    segments = list(zip(points, points[1:], strict=False))
+    (beat0, sample0), (beat1, sample1) = next(
+        (segment for segment in segments if beat_time <= segment[1][0]), segments[-1]
+    )
+    if beat1 == beat0:
+        return None
+    return sample0 + (beat_time - beat0) * (sample1 - sample0) / (beat1 - beat0)
+
+
 class LiveBackendTracksClipsMixin:
     _WARP_MODE_VALUES = {
         "beats": 0,
@@ -496,6 +525,7 @@ class LiveBackendTracksClipsMixin:
             "warping": bool(getattr(clip_obj, "warping", False)),
             "warp_mode": getattr(clip_obj, "warp_mode", None),
             "available_warp_modes": list(getattr(clip_obj, "available_warp_modes", [])),
+            "sample_duration": _sample_duration_seconds(clip_obj),
         }
 
     def clip_warp_set(
@@ -524,7 +554,17 @@ class LiveBackendTracksClipsMixin:
                 message="Clip warp marker list API is not available in Live API",
                 hint="Use a Live version exposing clip.warp_markers.",
             )
-        return {"track": track, "clip": clip, "warp_markers": list(markers)}
+        return {
+            "track": track,
+            "clip": clip,
+            "warp_markers": [
+                {
+                    "beat_time": float(getattr(marker, "beat_time", 0.0)),
+                    "sample_time": float(getattr(marker, "sample_time", 0.0)),
+                }
+                for marker in markers
+            ],
+        }
 
     def clip_warp_marker_add(
         self,
@@ -540,9 +580,27 @@ class LiveBackendTracksClipsMixin:
                 message="Clip warp marker write API is not available in Live API",
                 hint="Use a Live version exposing clip.add_warp_marker.",
             )
-        marker = {"beat_time": float(beat_time)}
-        if sample_time is not None:
-            marker["sample_time"] = float(sample_time)
+        try:
+            import Live  # type: ignore
+        except ImportError:  # outside Live (tests): plain mapping payload
+            marker: Any = {"beat_time": float(beat_time)}
+            if sample_time is not None:
+                marker["sample_time"] = float(sample_time)
+        else:
+            # The Python LOM rejects a dict here and its WarpMarker constructor
+            # requires both times, so derive sample_time from the existing
+            # markers when it is omitted. That keeps the clip's current timing.
+            resolved_sample_time = sample_time
+            if resolved_sample_time is None:
+                resolved_sample_time = _sample_time_at_beat(
+                    getattr(clip_obj, "warp_markers", ()), float(beat_time)
+                )
+            if resolved_sample_time is None:
+                raise _invalid_argument(
+                    message="Cannot derive sample_time for the new warp marker",
+                    hint="Pass --sample-time explicitly.",
+                )
+            marker = Live.Clip.WarpMarker(float(resolved_sample_time), float(beat_time))
         add_warp_marker(marker)
         return {
             "track": track,

@@ -39,6 +39,16 @@ def test_global_id_elements_cover_every_pointee_family(tag: str) -> None:
     assert [element.tag for element in global_id_elements(root)] == [tag]
 
 
+def test_global_id_elements_skip_parameter_containers_without_id() -> None:
+    # Live 12.2+ devices (e.g. Drum Sampler voices) have parameters named
+    # ``Voice_ModulationTarget``: a parameter container, not a global-ID element.
+    root = ET.Element("Ableton")
+    container = ET.SubElement(root, "Voice_ModulationTarget")
+    ET.SubElement(container, "AutomationTarget", Id="5")
+
+    assert [element.tag for element in global_id_elements(root)] == ["AutomationTarget"]
+
+
 def test_pointee_references_reads_pointee_id_values() -> None:
     root = ET.Element("Ableton")
     ET.SubElement(root, "PointeeId", Value="7")
