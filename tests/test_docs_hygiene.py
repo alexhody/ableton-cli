@@ -22,6 +22,8 @@ ENVIRONMENT_INDEPENDENT_DOC_GLOBS = (
     ".cursor/skills/**/*.md",
 )
 HOST_SPECIFIC_MARKERS = ("".join(("6uc", "lz1")), "/" + "Users/")
+# The upstream repository slug (README credits) is a public reference, not a host path.
+ALLOWED_PUBLIC_REFERENCES = ("".join(("6uc", "lz1", "/ableton-cli")),)
 
 
 def _read(path: Path) -> str:
@@ -40,12 +42,18 @@ def test_removed_docs_do_not_exist() -> None:
     assert not QUALITY_HARNESS_TODO_DOC.exists()
 
 
+def _without_public_references(markdown: str) -> str:
+    for reference in ALLOWED_PUBLIC_REFERENCES:
+        markdown = markdown.replace(reference, "")
+    return markdown
+
+
 def test_agent_docs_do_not_reference_host_specific_paths() -> None:
     violations = [
         f"{path.relative_to(REPO_ROOT)} contains {marker!r}"
         for path in _environment_independent_docs()
         for marker in HOST_SPECIFIC_MARKERS
-        if marker in _read(path)
+        if marker in _without_public_references(_read(path))
     ]
 
     assert violations == []
